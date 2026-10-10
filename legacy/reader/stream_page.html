@@ -1,0 +1,84 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GPC 시계열 판독 실시간</title>
+<style>
+:root{--bg:#0f1513;--panel:#18211e;--ink:#e3ebe8;--mut:#93a39e;--line:#2b3834;--ok:#4ade80;--bad:#f87171;--vlm:#fb923c;--card:#e3ebe8;--truth:#60a5fa}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px "Noto Sans KR",system-ui,sans-serif}
+.w{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:12px;padding:12px}
+@media(max-width:1100px){.w{grid-template-columns:minmax(0,1fr)}}
+.st{position:relative;aspect-ratio:16/9;background:#000;border:1px solid var(--line)}.st img,.st svg{position:absolute;inset:0;width:100%;height:100%}
+.p{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;display:grid;gap:10px;align-content:start}
+.k{color:var(--mut);font-size:12px}.v{font:500 24px ui-monospace,monospace}.s{font:12.5px ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.bar{display:flex;flex-wrap:wrap;gap:6px 16px;justify-content:space-between;color:var(--mut);font-size:12px;margin-top:6px}
+.lg i{display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:-2px;margin-right:4px}
+.full{grid-column:1/-1}.tbl{overflow-x:auto}table{border-collapse:collapse;font:12px ui-monospace,monospace;width:100%}
+th,td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}th{color:var(--mut);font-weight:500}
+svg text{fill:var(--mut);font:11px ui-monospace,monospace}
+</style>
+<div class="w">
+ <div>
+  <div class="st"><img src="/stream.mjpg" alt="시뮬레이터 화면"><svg id="ov" viewBox="0 0 1920 1080" preserveAspectRatio="none"></svg></div>
+  <div class="bar"><span class="lg"><i style="background:var(--vlm)"></i>VLM 이 읽은 점 (마지막 판독)</span>
+   <span class="lg"><i style="border:3px solid var(--truth)"></i>그래프에 그려진 실제 값</span>
+   <span>VLM 에는 그래프 상자만 보낸다 — 위쪽 숫자 카드는 잘라 냄</span><span id="tick"></span></div>
+ </div>
+ <div class="p" id="p">연결 중…</div>
+ <div class="p full"><div class="k">현재값 추이 (점선 = 데이터셋 교체) — 흰 선: 화면 숫자 카드 · 파랑: 그래프 선 끝 · 주황 점: VLM 이 읽은 '현재'</div>
+  <svg id="ch" viewBox="0 0 1200 260" style="width:100%;height:auto"></svg></div>
+ <div class="p full"><div class="k">최근 판독 — 11곳(−10분 … 현재) VLM 값 / 실제 값</div><div class="tbl"><table id="tb"></table></div></div>
+</div>
+<script>
+const f=(v,n=3)=>v==null?"–":(+v).toFixed(n), esc=s=>String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const cls=e=>e==null?"":(e>0.01?"bad":"ok");
+async function poll(){try{draw(await (await fetch("/state.json",{cache:"no-store"})).json())}catch(e){}setTimeout(poll,500)}
+function draw(d){
+ const L=d.last, S=d.summary||{}, M=d.meta||{};
+ document.getElementById("tick").textContent=`판독 ${d.n}회 · ${d.done?"완료":"진행 중"}`;
+ if(!L){document.getElementById("p").textContent="첫 판독 대기…";return}
+ document.getElementById("p").innerHTML=`
+ <div class="k">${esc(M.model)} · ${M.speed}배속 · ${M.switch_s}초마다 데이터셋 교체</div>
+ <div><div class="k">지금 데이터셋 (#${L.episode})</div><div class="v" style="font-size:18px">${esc(L.fault)} · seed ${L.seed} · ${L.since_inject_s<0?"주입 "+(-L.since_inject_s).toFixed(0)+"초 전":"주입 후 +"+L.since_inject_s.toFixed(0)+"초"}</div></div>
+ <div class="row"><div><div class="k">화면 숫자 카드</div><div class="v">${f(L.card)}</div></div>
+  <div><div class="k">그래프 선 끝</div><div class="v" style="color:var(--truth)">${f(L.line_end)}</div></div>
+  <div><div class="k">VLM '현재'</div><div class="v" style="color:var(--vlm)">${f(L.vlm_now)}</div></div></div>
+ <div class="row"><div><div class="k">VLM − 카드</div><div class="v ${cls(L.err_card)}">${f(L.err_card)}</div></div>
+  <div><div class="k">VLM − 선 끝</div><div class="v ${cls(L.err_line)}">${f(L.err_line)}</div></div>
+  <div><div class="k">11곳 평균 오차</div><div class="v ${cls(L.series_mae)}">${f(L.series_mae)}</div></div></div>
+ <div><div class="k">누적 (${S.reads}회, 실패 ${S.fails})</div><div class="s">현재값 오차 평균  카드 대비 ${f(S.mae_card,4)} · 선 끝 대비 ${f(S.mae_line,4)}
+11곳 평균 오차    ${f(S.mae_series,4)}
+VLM 응답          평균 ${f(S.lat,2)}초 (마지막 ${f(L.latency_s,2)}초, ${esc(L.provider)})</div></div>
+ <div><div class="k">시나리오별 (판독 수 · '현재' 선 끝 대비 · 11곳)</div><div class="s">${Object.entries(d.per_scenario||{}).map(([k,v])=>`${k.padEnd(8)} ${String(v.n).padStart(3)}회  ${f(v.now_vs_line,4)}  ${f(v.series,4)}`).join("\n")}</div></div>
+ <div><div class="k">VLM 원문</div><div class="s">${esc(L.raw)}</div></div>`;
+ let ov="";
+ (L.pts_truth||[]).forEach(p=>{if(p)ov+=`<circle cx="${p[0]}" cy="${p[1]}" r="13" fill="none" stroke="#60a5fa" stroke-width="5"/>`});
+ const pv=(L.pts_vlm||[]).filter(Boolean);
+ if(pv.length){ov+=`<polyline points="${pv.map(p=>p.join(",")).join(" ")}" fill="none" stroke="#fb923c" stroke-width="3" stroke-dasharray="8 6"/>`;
+  pv.forEach(p=>ov+=`<circle cx="${p[0]}" cy="${p[1]}" r="8" fill="#fb923c"/>`)}
+ document.getElementById("ov").innerHTML=ov;
+ chart(d.hist||[]); table(d.recent||[]);
+}
+function chart(H){
+ const W=1200,Hh=260,l=50,r=10,t=10,b=24, g=document.getElementById("ch");
+ if(H.length<2){g.innerHTML="";return}
+ const xs=H.map(h=>h.wall_s), x0=xs[0], x1=Math.max(xs[xs.length-1],x0+60);
+ const vals=H.flatMap(h=>[h.card,h.line_end,h.vlm_now]).filter(v=>v!=null);
+ let lo=Math.min(...vals)-.01, hi=Math.max(...vals)+.01;
+ const X=v=>l+(v-x0)/(x1-x0)*(W-l-r), Y=v=>Hh-b-(v-lo)/(hi-lo)*(Hh-t-b);
+ let s="";
+ for(let k=0;k<=4;k++){const v=lo+(hi-lo)*k/4;s+=`<line x1="${l}" x2="${W-r}" y1="${Y(v)}" y2="${Y(v)}" stroke="#2b3834"/><text x="${l-6}" y="${Y(v)+4}" text-anchor="end">${v.toFixed(3)}</text>`}
+ for(let tt=0;tt<=x1-x0;tt+=60)s+=`<text x="${X(x0+tt)}" y="${Hh-6}" text-anchor="middle">${tt/60}분</text>`;
+ H.forEach((h,i)=>{if(i&&h.episode!==H[i-1].episode)s+=`<line x1="${X(h.wall_s)}" x2="${X(h.wall_s)}" y1="${t}" y2="${Hh-b}" stroke="#93a39e" stroke-dasharray="3 4"/>`});
+ const path=k=>{let p="";H.forEach((h,i)=>{if(h[k]!=null)p+=(p?"L":"M")+X(h.wall_s).toFixed(1)+" "+Y(h[k]).toFixed(1)});return p};
+ s+=`<path d="${path("card")}" fill="none" stroke="#e3ebe8" stroke-width="1.5"/><path d="${path("line_end")}" fill="none" stroke="#60a5fa" stroke-width="2"/>`;
+ H.forEach(h=>{if(h.vlm_now!=null)s+=`<circle cx="${X(h.wall_s)}" cy="${Y(h.vlm_now)}" r="3" fill="#fb923c"/>`});
+ g.innerHTML=s;
+}
+function table(R){
+ let h="<tr><th>#</th><th>시나리오</th><th>시각</th>"+["−10","−9","−8","−7","−6","−5","−4","−3","−2","−1","현재"].map(m=>`<th>${m}</th>`).join("")+"<th>평균 오차</th></tr>";
+ R.slice().reverse().forEach(r=>{h+=`<tr><td>${r.k}</td><td style="text-align:left">${esc(r.fault)}</td><td>${r.since_inject_s<0?"−":"+"}${Math.abs(r.since_inject_s).toFixed(0)}s</td>`+
+  (r.series_truth||[]).map((tv,i)=>{const vv=(r.series_vlm||[])[i];const e=vv!=null&&tv!=null?Math.abs(vv-tv):null;
+   return `<td class="${cls(e)}">${f(vv)}<br><span style="color:#60a5fa">${f(tv)}</span></td>`}).join("")+`<td class="${cls(r.series_mae)}">${f(r.series_mae,4)}</td></tr>`});
+ document.getElementById("tb").innerHTML=h;
+}
+poll();
+</script>

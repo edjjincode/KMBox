@@ -1,0 +1,608 @@
+<title>이상 감지 폐루프 보드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 관제실 보드: 위 = 요약 표(이상별 상태 한 줄), 아래 = 이상 6종 카드(그래프 2개 + 노브 + 판단 + 누른 기록) */
+:root {
+  --bg: #eef1f3; --panel: #ffffff; --ink: #121a1f; --ink2: #475660; --mut: #6f7d86; --line: #d6dde2; --grid: #e8edf0;
+  --gpc: #2a78d6; --uni: #6250d6; --band: rgba(27, 175, 122, .11);
+  --good: #0f7b4b; --bad: #c0362c; --warn: #9a6a00; --undo: #6f7d86;
+  --sans: "IBM Plex Sans KR", "Noto Sans KR", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1418; --panel: #172026; --ink: #e5ecf0; --ink2: #b3c1ca; --mut: #8696a0; --line: #2a363e; --grid: #222d34;
+  --gpc: #3987e5; --uni: #9085e9; --band: rgba(25, 158, 112, .16); --good: #4ade80; --bad: #f87171; --warn: #facc15; --undo: #8696a0; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1418; --panel: #172026; --ink: #e5ecf0; --ink2: #b3c1ca; --mut: #8696a0; --line: #2a363e; --grid: #222d34;
+  --gpc: #3987e5; --uni: #9085e9; --band: rgba(25, 158, 112, .16); --good: #4ade80; --bad: #f87171; --warn: #facc15; --undo: #8696a0; color-scheme: dark }
+* { box-sizing: border-box }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); }
+.wrap { max-width: 1400px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 48px; display: grid; gap: 16px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; text-wrap: balance; }
+.sub { color: var(--ink2); margin: 2px 0 0; max-width: 80ch; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.bar label { color: var(--mut); font-size: 13px; }
+select, button { font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+button.primary { background: var(--gpc); color: #fff; border-color: var(--gpc); font-weight: 600; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--gpc); outline-offset: 2px; }
+.clock { font-family: var(--mono); color: var(--ink2); }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; min-width: 0; }
+.tbl { overflow-x: auto; } table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; color: var(--mut); font-weight: 500; font-size: 12px; border-bottom: 1px solid var(--line); padding: 6px 8px; white-space: nowrap; }
+td { border-bottom: 1px solid var(--line); padding: 6px 8px; white-space: nowrap; }
+td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.pill { display: inline-block; padding: 0 8px; border-radius: 999px; border: 1px solid currentColor; font-size: 12px; font-weight: 600; }
+.ok { color: var(--good) } .bad { color: var(--bad) } .warn { color: var(--warn) } .mut { color: var(--mut) }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 14px; }
+.card { display: grid; gap: 8px; }
+.card .hd { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.card .hd b { font-size: 15px; }
+.card .mech { color: var(--mut); font-size: 12.5px; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+svg { width: 100%; height: auto; display: block; }
+svg text { fill: var(--mut); font: 10.5px var(--mono); }
+.knobs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; font-size: 12px; }
+.knobs div { background: var(--bg); border-radius: 4px; padding: 3px 6px; min-width: 0; }
+.knobs .k { color: var(--mut); font-size: 11px; } .knobs .v { font-family: var(--mono); font-weight: 500; }
+.knobs .moved .v { color: var(--warn); }
+.judge { background: var(--bg); border-radius: 4px; padding: 6px 8px; font-size: 13px; }
+.judge .a { font-weight: 700; } .judge .w { color: var(--ink2); font-size: 12.5px; }
+.log { font: 12px/1.6 var(--mono); color: var(--ink2); max-height: 96px; overflow-y: auto; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+</style>
+
+<div class="wrap">
+  <div>
+    <h1>이상 감지 폐루프 보드 — 시뮬레이터 v2</h1>
+    <p class="sub">이상 6종을 동시에 돌린다. 각 칸의 에이전트는 화면에 그려진 GPC·균일도 선만 보고 원인 피처를 판정해 버튼을 누르고, 누른 뒤 그래프가 이상 반대 방향으로 움직였는지 확인한다. 두 번 연속 듣지 않으면 되돌린다.</p>
+  </div>
+  <div class="bar">
+    <label for="spd">속도</label>
+    <select id="spd"><option value="2">실시간</option><option value="8">4배속</option><option value="40" selected>20배속</option><option value="120">60배속</option></select>
+    <button id="restart" class="primary">새 시드로 다시 시작</button>
+    <button id="pause">일시정지</button>
+    <span class="clock" id="clock"></span>
+  </div>
+  <section>
+    <div class="tbl"><table id="sum"></table></div>
+  </section>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script>/* ---------------------------------------------------------------------------
+ * 좌표 단일 소스. 렌더링(index.html)과 드라이버가 이 파일 하나만 참조한다.
+ * 값 부분은 순수 JSON 이라 파이썬도 그대로 json.loads 로 읽는다.
+ *
+ * 버튼 y: 사양서 7절의 1010/1080 은 R4(920~1050) 안에 들어가지 않아
+ *         952/1018 로 옮겼다. x 는 7절 그대로다.
+ * ------------------------------------------------------------------------- */
+const COORDS =
+{
+  "canvas": { "w": 1920, "h": 1080 },
+
+  "regions": {
+    "R1": { "x": 40,   "y": 90,  "w": 1840, "h": 80,  "role": "현재값 카드 2개" },
+    "R2": { "x": 40,   "y": 184, "w": 1840, "h": 600, "role": "결과 그래프 2개 — 주 정보원. GPC 를 세로로 크게(패치 17개)" },
+    "R3": { "x": 40,   "y": 796, "w": 1840, "h": 112, "role": "노브 스파크라인 5개" },
+    "R4": { "x": 40,   "y": 920, "w": 1200, "h": 130, "role": "제어 버튼" },
+    "R5": { "x": 1260, "y": 920, "w": 620,  "h": 130, "role": "조치 이력" }
+  },
+
+  "crops": {
+    "R2_PLUS_R5": { "x": 40, "y": 184, "w": 1840, "h": 866 },
+    "R2_ONLY":    { "x": 40, "y": 184, "w": 1840, "h": 600 },
+    "GPC_ONLY":   { "x": 40, "y": 184, "w": 1120, "h": 600 }
+  },
+
+  "value_cards": [
+    { "key": "gpc",        "x": 40,  "y": 90, "w": 910, "h": 80 },
+    { "key": "uniformity", "x": 970, "y": 90, "w": 910, "h": 80 }
+  ],
+
+  "charts": {
+    "gpc":        { "x": 40, "y": 188, "w": 1840, "h": 468, "ymin": 0.80, "ymax": 1.50 },
+    "uniformity": { "x": 40, "y": 658, "w": 1840, "h": 124, "ymin": 0.40, "ymax": 1.80 }
+  },
+
+  "_charts_clean_note": "ui=clean: 선만 남긴 차트. GPC 는 ChartQA 비율로 크게, 균일도는 떨어진 별도 상자. 좌표는 R2 안.",
+  "charts_clean": {
+    "gpc":        { "x": 40,   "y": 184, "w": 1120, "h": 600, "ymin": 0.95, "ymax": 1.35 },
+    "uniformity": { "x": 1200, "y": 184, "w": 680,  "h": 600, "ymin": 0.40, "ymax": 1.80 }
+  },
+
+  "sparklines": [
+    { "key": "temp", "x": 40, "y": 796, "w": 352, "h": 112 },
+    { "key": "press", "x": 412, "y": 796, "w": 352, "h": 112 },
+    { "key": "pulse", "x": 784, "y": 796, "w": 352, "h": 112 },
+    { "key": "purge", "x": 1156, "y": 796, "w": 352, "h": 112 },
+    { "key": "flow", "x": 1528, "y": 796, "w": 352, "h": 112 }
+  ],
+
+  "buttons": {
+    "temp_down":     { "x": 310,  "y": 952,  "w": 56,  "h": 56, "label": "−", "knob": "temp",  "dir": -1 },
+    "temp_up":       { "x": 380,  "y": 952,  "w": 56,  "h": 56, "label": "+",      "knob": "temp",  "dir":  1 },
+    "press_down":    { "x": 710,  "y": 952,  "w": 56,  "h": 56, "label": "−", "knob": "press", "dir": -1 },
+    "press_up":      { "x": 780,  "y": 952,  "w": 56,  "h": 56, "label": "+",      "knob": "press", "dir":  1 },
+    "pulse_down":    { "x": 1110, "y": 952,  "w": 56,  "h": 56, "label": "−", "knob": "pulse", "dir": -1 },
+    "pulse_up":      { "x": 1180, "y": 952,  "w": 56,  "h": 56, "label": "+",      "knob": "pulse", "dir":  1 },
+    "purge_down":    { "x": 310,  "y": 1018, "w": 56,  "h": 56, "label": "−", "knob": "purge", "dir": -1 },
+    "purge_up":      { "x": 380,  "y": 1018, "w": 56,  "h": 56, "label": "+",      "knob": "purge", "dir":  1 },
+    "flow_down":     { "x": 710,  "y": 1018, "w": 56,  "h": 56, "label": "−", "knob": "flow",  "dir": -1 },
+    "flow_up":       { "x": 780,  "y": 1018, "w": 56,  "h": 56, "label": "+",      "knob": "flow",  "dir":  1 },
+    "request_clean": { "x": 1080, "y": 1018, "w": 200, "h": 56, "label": "클리닝 요청", "knob": null, "dir": 0 }
+  },
+
+  "button_groups": [
+    { "knob": "temp",  "x": 80,  "y": 952  },
+    { "knob": "press", "x": 480, "y": 952  },
+    { "knob": "pulse", "x": 880, "y": 952  },
+    { "knob": "purge", "x": 80,  "y": 1018 },
+    { "knob": "flow",  "x": 480, "y": 1018 }
+  ],
+
+  "actions": [
+    "temp_down", "temp_up", "press_down", "press_up", "pulse_down", "pulse_up",
+    "purge_down", "purge_up", "flow_down", "flow_up", "request_clean", "noop"
+  ]
+}
+;
+if (typeof module !== "undefined") module.exports = COORDS;
+if (typeof window !== "undefined") window.COORDS = COORDS;
+</script>
+<script>
+/* ===========================================================================
+ * 시뮬레이터 v2 엔진 — 피처(실효 공정값)가 GPC·균일도를 만든다. (설계: sim_v2/model.py)
+ *
+ *   실효 피처 = 노브 설정값 + 숨은 교란 d(t)
+ *   GPC      = 1.10 + Σ 피처별 GPC 항 + 잡음
+ *   균일도    = 0.90 + Σ 피처별 균일도 항 + 잡음
+ *
+ * 이상 = 피처 하나에 교란을 넣는 것. 노브를 누르면 실효 피처가 바뀌어 같은 식으로 지표가 움직인다.
+ * 화면(app 블록)은 v1 과 같은 API(Sim·tick·view·gt·apply·hitTest)만 쓴다.
+ * =========================================================================== */
+(function (root) {
+"use strict";
+
+const DT = 0.5, WINDOW_TICKS = 1200, PREROLL_TICKS = 1200, EPISODE_TICKS = PREROLL_TICKS + 1200;
+const CHART_POINTS = 120, ACTION_DWELL_S = 30;
+const GPC_BASE = 1.10, GPC_BAND = [1.05, 1.15], U_BASE = 0.90, U_BAND = [0.50, 1.30];
+const GPC_NOISE = 0.006, U_NOISE = 0.02, OSC_PERIOD_S = 40;
+
+const KNOBS = {
+  temp:  { base: 255,  step: 5,    min: 230,  max: 280,  dp: 0, unit: "°C",   label: "온도" },
+  press: { base: 1.4,  step: 0.1,  min: 0.8,  max: 2.2,  dp: 1, unit: "Torr", label: "압력" },
+  pulse: { base: 0.10, step: 0.01, min: 0.04, max: 0.20, dp: 2, unit: "s",    label: "펄스" },
+  purge: { base: 4.5,  step: 0.5,  min: 2.0,  max: 9.0,  dp: 1, unit: "s",    label: "퍼지" },
+  flow:  { base: 225,  step: 25,   min: 100,  max: 400,  dp: 0, unit: "sccm", label: "유량" }
+};
+const KNOB_ORDER = ["temp", "press", "pulse", "purge", "flow"];
+// 정상 범위(공정 창). 창 안에서는 지표가 조금만 움직이고, 하한·상한을 넘으면 가파르게 나빠진다.
+const WINDOW = { temp: [245, 265], press: [1.2, 1.6], pulse: [0.08, 0.14], purge: [3.5, 6.0], flow: [175, 300] };
+const CORRECTION_LIMIT = { temp: 265, press: 1.6, pulse: 0.14, purge: 6.0, flow: 300 };   // 화면의 '상한' = 창 위쪽 끝
+function limitOf(k) { return WINDOW[k][1]; }
+
+// 이상 = 교란이 들어가는 피처. normal 은 교란 없음
+const FAULT_TYPES = ["normal", "temp", "purge", "pulse", "press", "flow"];
+const MECHANISM = {
+  normal: "정상 — 교란 없음",
+  temp:   "온도 — 벽 증착 누적으로 실효 온도가 서서히 떨어짐",
+  purge:  "퍼지 — 배기 밸브 이상으로 퍼지 효율이 갑자기 떨어짐",
+  pulse:  "펄스 — 버블러 고갈로 30초 뒤부터 전구체 공급이 꺾이며 줄어듦",
+  press:  "압력 — 배기 제어 불안정으로 압력이 40초 주기로 흔들리며 커짐",
+  flow:   "유량 — MFC 드리프트로 운반 유량이 줄어듦"
+};
+// 맞는 조치: 교란 피처를 되돌리는 방향
+const FIX = { temp: "temp_up", purge: "purge_up", pulse: "pulse_up", press: "press_down", flow: "flow_up" };
+
+function smooth(x) { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); }
+/** 숨은 교란 d(s). s = 주입 후 초 */
+/** 숨은 교란 d(s). s = 주입 후 초. 실제값을 하한(압력은 양쪽 한계) 쪽으로 끌고 가서 넘긴다 */
+function disturb(fault, s) {
+  if (s < 0) return 0;
+  switch (fault) {
+    case "temp":  return -Math.min(30, 20 * s / 200);                 // 255 → 245(하한) 100초 → 235(150초)
+    case "purge": return -2.0 * (1 - Math.exp(-s / 5));               // 4.5 → 2.5 (하한 3.5 아래로 급락)
+    case "pulse": return -0.04 * smooth((s - 30) / 120);              // 0.10 → 0.06 (하한 0.08 아래로 꺾여 내려감)
+    case "press": return 0.24 * (1 - Math.exp(-s / 60));              // 1.4 ± 0.24 → 1.16~1.64 (양쪽 한계를 오감)
+    case "flow":  return -100 * (1 - Math.exp(-s / 40));              // 225 → 125 (하한 175 아래로)
+    default:      return 0;
+  }
+}
+const lo = function (k, v) { return Math.max(0, WINDOW[k][0] - v); };   // 하한을 넘은 만큼
+const hi = function (k, v) { return Math.max(0, v - WINDOW[k][1]); };   // 상한을 넘은 만큼
+/** 피처 → 지표 항. 창 안 = 완만한 기울기(버튼을 누르면 보이는 정도), 창 밖 = 가파른 기울기 */
+function gpcTerms(e, amp, tS) {
+  return {
+    temp:  -0.002 * (e.temp - 255) + 0.008 * lo("temp", e.temp) - 0.006 * hi("temp", e.temp),   // 하한 아래: 응축 → GPC↑, 상한 위: 탈착 → GPC↓
+    purge:  0.02 * Math.max(0, 4.5 - e.purge) + 0.10 * lo("purge", e.purge),                      // 퍼지 부족 → 잔류 가스 CVD → GPC↑ (넉넉하면 포화)
+    pulse: -1.0 * Math.max(0, 0.10 - e.pulse) - 5.0 * lo("pulse", e.pulse),                       // 전구체 부족 → 미포화 → GPC↓ (넉넉하면 포화)
+    press:  0.10 * (e.press - 1.4) + 0.25 * amp * Math.sin(2 * Math.PI * tS / OSC_PERIOD_S),      // 압력↑ → 체류↑ → GPC↑, 진동은 그대로 GPC 진동
+    flow:   (e.flow >= 225 ? 0.0004 : 0.0003) * (e.flow - 225)
+  };
+}
+function uTerms(e, amp) {
+  return {
+    temp:  0.002 * Math.abs(e.temp - 255) + 0.004 * lo("temp", e.temp) + 0.03 * hi("temp", e.temp),
+    purge: 0.05 * Math.max(0, 4.5 - e.purge) + 0.40 * lo("purge", e.purge) - 0.02 * Math.max(0, e.purge - 4.5),
+    pulse: 0.5 * Math.max(0, 0.10 - e.pulse) + 3.0 * lo("pulse", e.pulse) + 2.0 * Math.max(0, e.pulse - 0.10) + 4.0 * hi("pulse", e.pulse),
+    press: 1.0 * amp + 0.3 * Math.abs(e.press - 1.4) + 1.0 * (lo("press", e.press) + hi("press", e.press)),
+    flow:  0.002 * Math.max(0, 225 - e.flow) + 0.007 * lo("flow", e.flow) + 0.0012 * Math.max(0, e.flow - 225) + 0.005 * hi("flow", e.flow)
+  };
+}
+const sum = function (o) { let s = 0; for (const k in o) s += o[k]; return s; };
+
+function mulberry32(a) {
+  return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+function Sim(opts) {
+  opts = opts || {};
+  this.seed = opts.seed || 1; this.faultType = FAULT_TYPES.indexOf(opts.faultType) >= 0 ? opts.faultType : "normal";
+  this.injectTick = opts.injectTick != null ? opts.injectTick : PREROLL_TICKS;
+  this.rand = mulberry32(this.seed);
+  const r = this.rand; let spare = null;
+  this.gauss = function () { if (spare !== null) { const s = spare; spare = null; return s; }
+    let u = 0, v = 0; while (u === 0) u = r(); v = r(); const m = Math.sqrt(-2 * Math.log(u));
+    spare = m * Math.sin(2 * Math.PI * v); return m * Math.cos(2 * Math.PI * v); };
+  this.t = 0; this.clockS = 9 * 3600 + Math.floor(this.rand() * 3600);
+  this.knobs = {}; this.knobSeries = {}; this.effSeries = {};
+  for (const k of KNOB_ORDER) { this.knobs[k] = KNOBS[k].base; this.knobSeries[k] = []; this.effSeries[k] = []; }
+  this.gpcSeries = []; this.uSeries = []; this.actionLog = []; this.pending = null;
+  this.wobG = 0; this.wobU = 0; this.cleanRequested = false;
+  this.state();
+}
+
+/** 지금 노브·교란으로 실효 피처와 지표(잡음 없는 값)를 계산한다. */
+Sim.prototype.state = function () {
+  const s = (this.t - this.injectTick) * DT, d = disturb(this.faultType, s);
+  const e = Object.assign({}, this.knobs);
+  if (this.faultType !== "press" && this.faultType !== "normal") e[this.faultType] += d;
+  const amp = this.faultType === "press" ? d * Math.min(1, Math.max(0, (this.knobs.press - 1.2) / 0.2)) : 0;
+  const tg = gpcTerms(e, amp, this.t * DT), tu = uTerms(e, amp);
+  this.dist = d; this.eff = e; this.amp = amp; this.termsG = tg; this.termsU = tu;
+  this.gpcTrue = GPC_BASE + sum(tg); this.uTrue = U_BASE + sum(tu);
+};
+
+/** 화면에 보여 줄 실효 피처 — 압력은 진동 진폭만큼 실제로 흔들린다 */
+Sim.prototype.effView = function () {
+  const e = Object.assign({}, this.eff);
+  e.press = this.knobs.press + this.amp * Math.sin(2 * Math.PI * this.t * DT / OSC_PERIOD_S);
+  return e;
+};
+
+Sim.prototype.tick = function () {
+  this.t++; this.clockS += DT;
+  this.state();
+  this.wobG = 0.985 * this.wobG + this.gauss() * 0.0018;
+  this.wobU = 0.985 * this.wobU + this.gauss() * 0.0057;
+  this.gpcDisplay = this.gpcTrue + this.wobG + this.gauss() * GPC_NOISE;
+  this.uDisplay = this.uTrue + this.wobU + this.gauss() * U_NOISE;
+  this.gpcSeries.push(this.gpcDisplay); this.uSeries.push(this.uDisplay);
+  const ev = this.effView();
+  for (const k of KNOB_ORDER) { this.knobSeries[k].push(this.knobs[k]); this.effSeries[k].push(ev[k]); }
+  if (this.pending) {
+    this.pending.remainingS -= DT;
+    if (this.pending.remainingS <= 0) this.settle();
+  }
+};
+
+/** 대기 끝: 대역까지의 거리가 줄었는지로 결과를 적는다. */
+Sim.prototype.settle = function () {
+  const p = this.pending, e = this.actionLog[p.logIndex];
+  // 목표값(1.10 / 0.90)까지의 거리 — 대역 안에서 움직여도 나아졌는지 보인다 (균일도는 GPC 의 약 3배로 움직여 1/3 로 맞춘다)
+  const dist = function (g, u) { return Math.abs(g - GPC_BASE) + Math.max(0, u - U_BASE) / 3; };
+  const before = dist(p.gpcAtPress, p.uAtPress), after = dist(this.gpcTrue, this.uTrue);
+  const ampGain = p.ampAtPress - this.amp;
+  e.status = "완료";
+  e.outcome = (before - after > 0.008 || ampGain > 0.02) ? "개선" : (after - before > 0.008 ? "악화" : "변화 없음");
+  this.pending = null;
+};
+
+Sim.prototype.clockStr = function () {
+  const s = Math.floor(this.clockS % 86400), two = function (n) { return String(n).padStart(2, "0"); };
+  return two(Math.floor(s / 3600)) + ":" + two(Math.floor((s % 3600) / 60)) + ":" + two(s % 60);
+};
+
+Sim.prototype.apply = function (actionId) {
+  if (!actionId || actionId === "noop") return { ok: true, applied: "noop" };
+  const base = { tick: this.t, time: this.clockStr(), id: actionId, outcome: "" };
+  const pend = (idx) => { this.pending = { id: actionId, remainingS: ACTION_DWELL_S, gpcAtPress: this.gpcTrue,
+                                          uAtPress: this.uTrue, ampAtPress: this.amp, logIndex: idx }; };
+  if (actionId === "request_clean") {
+    this.cleanRequested = true;
+    pend(this.actionLog.push(Object.assign(base, { text: "클리닝 요청", mark: "클리닝", status: "접수" })) - 1);
+    return { ok: true, applied: actionId };
+  }
+  const btn = COORDS.buttons[actionId];
+  if (!btn || !btn.knob) return { ok: false, reason: "unknown action: " + actionId };
+  const spec = KNOBS[btn.knob], rawV = this.knobs[btn.knob] + btn.dir * spec.step;
+  const next = Math.min(spec.max, Math.max(spec.min, rawV));
+  this.knobs[btn.knob] = +(Math.round(next / spec.step) * spec.step).toFixed(4);
+  const hitLimit = Math.abs(next - rawV) > 1e-9, sign = btn.dir > 0 ? "+" : "−";
+  pend(this.actionLog.push(Object.assign(base, { text: spec.label + " " + sign + spec.step.toFixed(spec.dp),
+    mark: spec.label + sign, status: hitLimit ? "한계" : "대기" })) - 1);
+  this.state();
+  return { ok: true, applied: actionId, hitLimit: hitLimit };
+};
+
+Sim.prototype.hitTest = function (x, y) {
+  for (const id in COORDS.buttons) {
+    const b = COORDS.buttons[id];
+    if (x >= b.x - b.w / 2 && x <= b.x + b.w / 2 && y >= b.y - b.h / 2 && y <= b.y + b.h / 2) return id;
+  }
+  return null;
+};
+
+const TOL_G = 0.03, TOL_U = 0.15;   // 잡음(σ GPC 0.006 · 균일도 0.02)의 5배 이상이어야 '화면에 보인다'
+/** 정답 조치. 교란 피처의 영향이 화면에 보일 만큼이면 그 피처를 되돌린다. 아니면 엉뚱하게 바꿔 둔 노브를 되돌린다. */
+Sim.prototype.correctAction = function () {
+  if (this.pending) return "noop";
+  const f = this.faultType;
+  if (f !== "normal" && this.t >= this.injectTick) {
+    const g = this.termsG[f], u = this.termsU[f];
+    const vis = f === "press" ? this.amp * 0.25 > 0.02 : (Math.abs(g) > TOL_G || u > TOL_U);
+    if (vis) {
+      if (f === "temp" && g < -TOL_G) return "temp_down";        // 온도를 너무 올려 반대로 넘어감
+      return FIX[f];
+    }
+  }
+  for (const k of KNOB_ORDER) {                                 // 교란 피처가 아닌데 바꿔 둔 노브
+    if (k === f || this.knobs[k] === KNOBS[k].base) continue;
+    if (Math.abs(this.termsG[k]) > TOL_G / 2 || this.termsU[k] > TOL_U / 2) return k + (this.knobs[k] > KNOBS[k].base ? "_down" : "_up");
+  }
+  return "noop";
+};
+
+Sim.prototype.rationale = function () {
+  if (this.pending) return "직전 조치가 반영되는 중이다. 결과를 기다린다.";
+  const a = this.correctAction();
+  return MECHANISM[this.faultType] + (a === "noop" ? " — 조치 불필요." : " — " + a + " 필요.");
+};
+
+function downsample(series, points, windowTicks) {
+  const start = Math.max(0, series.length - windowTicks), win = series.slice(start), out = [], n = win.length;
+  if (n === 0) return out;
+  const bucket = Math.max(1, Math.ceil(windowTicks / points));
+  for (let i = 0; i < n; i += bucket) {
+    const end = Math.min(i + bucket, n); let s = 0, lo = Infinity, hi = -Infinity;
+    for (let j = i; j < end; j++) { const v = win[j]; s += v; if (v < lo) lo = v; if (v > hi) hi = v; }
+    out.push({ v: s / (end - i), lo: lo, hi: hi, tick: start + i });
+  }
+  return out;
+}
+function downsampleStep(series, points, windowTicks) {
+  const start = Math.max(0, series.length - windowTicks), win = series.slice(start), out = [], n = win.length;
+  const bucket = Math.max(1, Math.ceil(windowTicks / points));
+  for (let i = 0; i < n; i += bucket) out.push({ v: win[Math.min(i + bucket, n) - 1], tick: start + i });
+  return out;
+}
+
+Sim.prototype.view = function (windowTicks, points) {
+  const W = windowTicks || WINDOW_TICKS, NP = points || CHART_POINTS;
+  const winStart = Math.max(0, this.gpcSeries.length - W), knobPoints = {};
+  const effPoints = {};
+  for (const k of KNOB_ORDER) { knobPoints[k] = downsampleStep(this.knobSeries[k], NP, W); effPoints[k] = downsample(this.effSeries[k], NP, W); }
+  return {
+    t: this.t, clock: this.clockStr(), gpc: this.gpcDisplay, uniformity: this.uDisplay,
+    gpcPoints: downsample(this.gpcSeries, NP, W), uPoints: downsample(this.uSeries, NP, W),
+    knobPoints: knobPoints, knobs: Object.assign({}, this.knobs), effPoints: effPoints, eff: this.effView(), oscAmp: this.amp,
+    markers: this.actionLog.filter(function (e) { return e.tick >= winStart; })
+                           .map(function (e) { return { frac: (e.tick - winStart) / W, mark: e.mark }; }),
+    pending: this.pending ? { id: this.pending.id, remainingS: Math.max(0, this.pending.remainingS) } : null,
+    log: this.actionLog.slice(-8).reverse(), windowTicks: W, seriesLen: this.gpcSeries.length
+  };
+};
+
+const r4 = function (o) { const out = {}; for (const k in o) out[k] = +(+o[k]).toFixed(4); return out; };
+Sim.prototype.gt = function () {
+  return {
+    t: this.t, seed: this.seed, fault_type: this.faultType, inject_tick: this.injectTick,
+    gpc_true: +this.gpcTrue.toFixed(4), gpc_display: +(this.gpcDisplay ?? this.gpcTrue).toFixed(4),
+    uniformity_true: +this.uTrue.toFixed(4), uniformity: +(this.uDisplay ?? this.uTrue).toFixed(4),
+    knobs: Object.assign({}, this.knobs), disturbance: +this.dist.toFixed(4), effective: r4(this.eff),
+    osc_amp: +this.amp.toFixed(4), terms_gpc: r4(this.termsG), terms_u: r4(this.termsU),
+    correct_action: this.correctAction(), rationale: this.rationale(),
+    pending_action: this.pending ? { id: this.pending.id, remaining_s: +this.pending.remainingS.toFixed(1) } : null
+  };
+};
+
+root.SIM = {
+  Sim: Sim, downsample: downsample, limitOf: limitOf, disturb: disturb, gpcTerms: gpcTerms, uTerms: uTerms,
+  DT: DT, WINDOW_TICKS: WINDOW_TICKS, PREROLL_TICKS: PREROLL_TICKS, EPISODE_TICKS: EPISODE_TICKS,
+  CHART_POINTS: CHART_POINTS, ACTION_DWELL_S: ACTION_DWELL_S,
+  GPC_BASE: GPC_BASE, GPC_BAND: GPC_BAND, U_BASE: U_BASE, U_BAND: U_BAND,
+  KNOBS: KNOBS, KNOB_ORDER: KNOB_ORDER, CORRECTION_LIMIT: CORRECTION_LIMIT, WINDOW: WINDOW,
+  FAULT_TYPES: FAULT_TYPES, MECHANISM: MECHANISM, FIX: FIX
+};
+if (typeof module !== "undefined") module.exports = root.SIM;
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+<script>/* 이상 감지 함수 + 폐루프 에이전트 (시뮬레이터 v2). reader/detect_v2.py 와 같은 규칙 — parity 시험으로 확인한다.
+ *
+ * detect(g, u, dt): 화면 그래프 선(최근 10분, dt 초 간격)만 보고 원인 피처와 조치를 낸다.
+ * Agent:            매 초 detect → 조치가 있으면 버튼을 누르고 30초 기다린다(결과 확인).
+ *                   노브가 이미 끝까지 가 있으면 더 누르지 않고 클리닝을 요청한다.
+ */
+(function (root) {
+"use strict";
+const TH = { osc: 0.006, acf: 0.3, mag: 0.05 };
+const TARGET = { gpc: 1.100, u: 0.900 };   // 화면 카드의 '목표'
+const U_SCALE = 3.0, SIG_DEG = { temp: 6.3, purge: 51.3, flow: 98.3, pulse: 166.0 };
+const KO = { temp: "온도", purge: "퍼지", flow: "유량", pulse: "펄스", press: "압력", normal: "정상" };
+const REVERSE = { temp_up: "temp_down", temp_down: "temp_up", press_up: "press_down", press_down: "press_up", pulse_up: "pulse_down",
+                  pulse_down: "pulse_up", purge_up: "purge_down", purge_down: "purge_up", flow_up: "flow_down", flow_down: "flow_up" };
+const ACTION = { normal: "noop", temp: "temp_up", purge: "purge_up", pulse: "pulse_up", press: "press_down", flow: "flow_up" };
+const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+
+function detect(g, u, dt, ignore) {   // ignore: 내가 누른 시각들(지금 기준 초, 음수) — 진동 판정에서 ±10초를 뺀다
+  const n = g.length, tAt = i => (i - (n - 1)) * dt;           // 지금 = 0초
+  const seg = (a, lo, hi) => a.filter((_, i) => tAt(i) > lo && tAt(i) <= hi);
+  const ng = seg(g, -20, 0), nu = seg(u, -20, 0);
+  if (ng.length < 2) return { cause: "normal", action: "noop", why: "그래프가 비었다", feat: {} };
+  const dg = mean(ng) - TARGET.gpc, du = mean(nu) - TARGET.u;      // 화면 카드에 적힌 목표값과 비교 (창 앞쪽은 이상 기간이 섞일 수 있다)
+  const w = g.map((v, i) => [tAt(i), v]).filter(p => p[0] > -90), m = w.length;
+  let sd = 0, best = 0, per = null;
+  if (m >= 12) {
+    const step = (w[m - 1][0] - w[0][0]) / (m - 1), h = Math.max(1, Math.round(10 / step));
+    const r = w.map((p, i) => { const sl = w.slice(Math.max(0, i - h), Math.min(m, i + h + 1)); return p[1] - mean(sl.map(q => q[1])); });
+    if (ignore) r.forEach((x, i) => { if (ignore.some(t => Math.abs(w[i][0] - t) <= 10)) r[i] = 0; });
+    const s0 = r.reduce((x, y) => x + y * y, 0) || 1e-12;
+    sd = Math.sqrt(s0 / m);
+    for (let lag = Math.max(1, Math.round(25 / step)); lag <= Math.min(m - 2, Math.round(60 / step)); lag++) {
+      let c = 0; for (let i = 0; i + lag < m; i++) c += r[i] * r[i + lag]; c /= s0;
+      if (c > best) { best = c; per = lag * step; }
+    }
+  }
+  const mag = Math.hypot(dg, du / U_SCALE), ang = Math.atan2(du / U_SCALE, dg) * 180 / Math.PI;
+  const feat = { dgpc: dg, du: du, osc_sd: sd, osc_acf: best, period_s: per, mag: mag, angle: ang };
+  const out = (c, why) => ({ cause: c, action: ACTION[c], why: why, feat: feat });
+  const sg = v => (v >= 0 ? "+" : "") + v.toFixed(3);
+  if (sd > TH.osc && best > TH.acf) return out("press", "GPC 가 " + Math.round(per) + "초 주기로 흔들림 (폭 " + sd.toFixed(3) + ")");
+  if (mag < TH.mag) return out("normal", "GPC " + sg(dg) + ", 균일도 " + sg(du) + " — 변화가 작다");
+  let c = null, cd = 1e9;
+  for (const k in SIG_DEG) { const dd = Math.abs(((ang - SIG_DEG[k] + 540) % 360) - 180); if (dd < cd) { cd = dd; c = k; } }
+  return out(c, "GPC " + sg(dg) + ", 균일도 " + sg(du) + " → 방향 " + Math.round(ang) + "° 가 " + KO[c] + " 지문(" + Math.round(SIG_DEG[c]) + "°)에 가장 가깝다");
+}
+
+/** 폐루프 에이전트. step(sim, 초, press) 를 시뮬레이터 1초마다 부른다. press(id) 가 버튼을 누른다(화면 경로).
+ *  - 같은 판정이 15초 이어져야 누른다 (진동처럼 판정이 출렁이는 동안은 기다린다)
+ *  - 누른 뒤 효과가 그래프에 드러날 때까지 기다린다 (압력 90초 = 진동 판정 창, 나머지 30초)
+ *  - 기다림이 끝나면 '누른 직후 그래프가 이상 방향의 반대로 움직였나' 를 본다 (압력은 흔들림이 줄었나).
+ *    같은 버튼이 두 번 연속 듣지 않으면 그동안 누른 것을 전부 되돌리고 5분 동안 그 버튼을 쓰지 않는다. */
+const WAIT_S = { press_down: 90 }, HOLD_S = 15;
+function unit(deg) { const r = deg * Math.PI / 180; return [Math.cos(r), Math.sin(r)]; }
+function Agent(opts) { this.undo = !(opts && opts.undo === false); this.waitUntil = -Infinity; this.banned = {}; this.presses = [];
+  this.streak = null; this.pending = null; this.last = null; this.lastAct = null; this.hist = []; this.log = []; }
+Agent.prototype.step = function (sim, nowS, press) {
+  const mine = this.presses.filter(p => nowS - p.t < 90).map(p => p.t - nowS);
+  const v = sim.view(), d = detect(v.gpcPoints.map(p => p.v), v.uPoints.map(p => p.v), 5, mine);
+  const note = (act, why) => (this.last = { d: d, act: act, why: why });
+  const doPress = (act, cause) => { press(act); this.presses.push({ t: nowS, act: act, cause: cause }); this.lastAct = act; };
+  if (nowS < this.waitUntil) return note("noop", "대기 " + Math.ceil(this.waitUntil - nowS) + "초 (" + this.lastAct + " 효과 확인 중)");
+  if (this.pending) {                                         // 직전 조치의 효과 판정
+    const p = this.pending; this.pending = null;
+    let good, how;
+    if (p.cause === "press") { const g = p.osc - d.feat.osc_sd; good = g > 0.002; how = "흔들림 " + p.osc.toFixed(3) + "→" + d.feat.osc_sd.toFixed(3); }
+    else { const n = unit(SIG_DEG[p.cause]), dx = d.feat.dgpc - p.x, dy = d.feat.du / U_SCALE - p.y;
+           const proj = -(dx * n[0] + dy * n[1]); good = proj > 0.005; how = KO[p.cause] + " 반대 방향으로 " + proj.toFixed(3); }
+    const sk = this.streak;
+    if (sk && sk.act === p.act) sk.bad = good ? 0 : sk.bad + 1;
+    this.log.push({ t: nowS, act: p.act, good: good, how: how });
+    if (this.undo && sk && sk.bad >= 2) {
+      for (let i = 0; i < sk.n; i++) doPress(REVERSE[sk.act], "되돌림");
+      this.banned[sk.act] = nowS + 300; this.streak = null; this.waitUntil = nowS + 30; this.hist = [];
+      return note(REVERSE[sk.act], sk.act + " 가 두 번 연속 듣지 않았다 (" + how + ") → " + sk.n + "번 되돌리고 5분 금지");
+    }
+  }
+  let act = d.action, why = d.why;
+  this.hist.push([nowS, d.cause]); this.hist = this.hist.filter(h => nowS - h[0] < HOLD_S);
+  if (act === "noop") { if (d.cause === "normal") this.streak = null; return note("noop", why); }
+  if (!(this.hist.length >= HOLD_S && this.hist.every(h => h[1] === d.cause))) return note("noop", why + " — 판정이 " + HOLD_S + "초 이어지면 누른다");
+  if (this.banned[act] > nowS) return note("noop", why + " — 그런데 " + act + " 는 방금 듣지 않아 보류");
+  const b = COORDS.buttons[act], k = b && b.knob ? SIM.KNOBS[b.knob] : null;
+  if (k && (b.dir > 0 ? sim.knobs[b.knob] >= k.max - 1e-9 : sim.knobs[b.knob] <= k.min + 1e-9)) {
+    act = "request_clean"; why = k.label + " 노브가 끝(" + sim.knobs[b.knob] + ")인데 " + d.why + " → 클리닝 요청";
+  }
+  if (REVERSE[act]) {
+    this.streak = this.streak && this.streak.act === act ? Object.assign(this.streak, { n: this.streak.n + 1 }) : { act: act, n: 1, bad: 0 };
+    this.pending = { act: act, cause: d.cause, x: d.feat.dgpc, y: d.feat.du / U_SCALE, osc: d.feat.osc_sd };
+  }
+  doPress(act, d.cause); this.hist = [];
+  this.waitUntil = nowS + (WAIT_S[act] || 30);
+  return note(act, why);
+};
+
+root.AGENT = { detect: detect, Agent: Agent, TH: TH, ACTION: ACTION, SIG_DEG: SIG_DEG };
+if (typeof module !== "undefined") module.exports = root.AGENT;
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+<script>
+const FAULTS = ["normal", "temp", "purge", "pulse", "press", "flow"];
+const KO = { normal: "정상", temp: "온도", purge: "퍼지", pulse: "펄스", press: "압력", flow: "유량",
+  noop: "대기", temp_up: "온도 +", temp_down: "온도 −", purge_up: "퍼지 +", purge_down: "퍼지 −", pulse_up: "펄스 +", pulse_down: "펄스 −",
+  press_up: "압력 +", press_down: "압력 −", flow_up: "유량 +", flow_down: "유량 −", request_clean: "클리닝 요청" };
+const INJECT_AFTER_S = 120;      // 시작 2분 뒤 주입
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+let runs = [], paused = false, baseSeed = 1;
+
+function start() {
+  baseSeed = 1 + Math.floor(Math.random() * 9000);
+  runs = FAULTS.map((f, i) => {
+    const sim = new SIM.Sim({ seed: baseSeed + i, faultType: f, injectTick: 1200 + INJECT_AFTER_S * 2 });
+    for (let k = 0; k < 1200; k++) sim.tick();          // 10분 창을 미리 채운다
+    return { f: f, sim: sim, ag: new AGENT.Agent(), presses: [], firstAt: null, nowS: -INJECT_AFTER_S };
+  });
+  $("grid").innerHTML = runs.map((r, i) => `<section class="card" id="c${i}"><div class="hd"><b>${KO[r.f]}${r.f !== "normal" ? " 교란" : ""}</b>
+    <span class="mech">${esc(SIM.MECHANISM[r.f].split(" — ")[1] || "")}</span></div>
+    <div class="charts"><svg id="g${i}" viewBox="0 0 300 150" role="img" aria-label="${KO[r.f]} GPC"></svg><svg id="u${i}" viewBox="0 0 300 150" role="img" aria-label="${KO[r.f]} 균일도"></svg></div>
+    <div class="knobs" id="k${i}"></div><div class="judge" id="j${i}"></div><div class="log" id="l${i}"></div></section>`).join("");
+  draw();
+}
+
+function tickAll(simSeconds) {
+  for (const r of runs) for (let s = 0; s < simSeconds; s++) {
+    r.sim.tick(); r.sim.tick(); r.nowS += 1;
+    const since = (r.sim.t - r.sim.injectTick) * SIM.DT;
+    const res = r.ag.step(r.sim, since, id => r.sim.apply(id));
+    if (res.act !== "noop") {
+      r.presses.push({ t: since, act: res.act, why: res.why, undo: res.why.indexOf("되돌리") >= 0 });
+      if (r.firstAt === null && !res.why.includes("되돌리")) r.firstAt = since;
+    }
+  }
+}
+
+function chart(el, pts, lo, hi, band, color, tick, presses, sim) {
+  const W = 300, H = 150, L = 34, R = 6, T = 8, B = 18, n = pts.length;
+  const X = i => L + (W - L - R) * i / Math.max(1, 119), Y = v => H - B - (Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo) * (H - T - B);
+  let g = `<rect x="${L}" y="${Y(band[1])}" width="${W - L - R}" height="${Y(band[0]) - Y(band[1])}" fill="var(--band)"/>`;
+  for (let v = lo; v <= hi + 1e-9; v += tick) g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"/><text x="${L - 4}" y="${Y(v) + 3.5}" text-anchor="end">${v.toFixed(2)}</text>`;
+  g += `<text x="${L}" y="${H - 4}">−10분</text><text x="${W - R}" y="${H - 4}" text-anchor="end">지금</text>`;
+  const off = 120 - n, winStart = sim.t - 1200;
+  const injX = L + (W - L - R) * ((sim.injectTick - winStart) / 1200);
+  if (sim.faultType !== "normal" && injX >= L) g += `<line x1="${injX}" x2="${injX}" y1="${T}" y2="${H - B}" stroke="var(--mut)" stroke-dasharray="3 3"/>`;
+  presses.forEach(p => { const tk = sim.injectTick + p.t / SIM.DT, x = L + (W - L - R) * ((tk - winStart) / 1200);
+    if (x >= L) g += `<line x1="${x}" x2="${x}" y1="${H - B - 7}" y2="${H - B}" stroke="${p.undo ? "var(--undo)" : (p.ok === false ? "var(--bad)" : "var(--good)")}" stroke-width="2.5"><title>${esc(KO[p.act])} · ${esc(p.why)}</title></line>`; });
+  g += `<path d="${pts.map((p, i) => (i ? "L" : "M") + X(i + off).toFixed(1) + " " + Y(p.v).toFixed(1)).join("")}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round"/>`;
+  if (n) g += `<circle cx="${X(n - 1 + off)}" cy="${Y(pts[n - 1].v)}" r="3" fill="${color}"/>`;
+  el.innerHTML = g;
+}
+
+function draw() {
+  let t = `<tr><th>교란</th><th>지금 판정</th><th>지금 조치 · 이유</th><th>첫 조치</th><th>누른 것</th><th>GPC</th><th>균일도</th><th>상태</th></tr>`;
+  runs.forEach((r, i) => {
+    const s = r.sim, v = s.view(), g = s.gt(), last = r.ag.last, since = (s.t - s.injectTick) * SIM.DT;
+    // 효과 판정 결과를 누른 기록에 붙인다
+    r.ag.log.forEach(e => { const p = r.presses.find(q => q.act === e.act && Math.abs(q.t - (e.t - (e.act === "press_down" ? 90 : 30))) <= 2 && q.ok === undefined); if (p) p.ok = e.good; });
+    chart($("g" + i), v.gpcPoints, 0.95, 1.30, SIM.GPC_BAND, "var(--gpc)", 0.05, r.presses, s);
+    chart($("u" + i), v.uPoints, 0.60, 1.50, SIM.U_BAND, "var(--uni)", 0.15, r.presses, s);
+    $("k" + i).innerHTML = SIM.KNOB_ORDER.map(k => `<div class="${s.knobs[k] !== SIM.KNOBS[k].base ? "moved" : ""}"><div class="k">${SIM.KNOBS[k].label}</div><div class="v">${s.knobs[k].toFixed(SIM.KNOBS[k].dp)}</div></div>`).join("");
+    const inG = g.gpc_true >= SIM.GPC_BAND[0] && g.gpc_true <= SIM.GPC_BAND[1], inU = g.uniformity_true <= SIM.U_BAND[1];
+    const fixes = r.presses.filter(p => !p.undo && p.act === SIM.FIX[r.f]).length, wrong = r.presses.filter(p => !p.undo && p.act !== SIM.FIX[r.f] && p.act !== "request_clean").length;
+    const undos = r.presses.filter(p => p.undo).length, cleans = r.presses.filter(p => p.act === "request_clean").length;
+    const cause = last ? last.d.cause : "normal";
+    $("j" + i).innerHTML = `<span class="mut">${since < 0 ? "주입 " + Math.ceil(-since) + "초 전" : "주입 후 +" + Math.floor(since) + "초"} · 판정</span> <span class="a">${KO[cause]}</span> → <span class="a">${last ? KO[last.act] : "대기"}</span><div class="w">${esc(last ? last.why : "")}</div>`;
+    $("l" + i).innerHTML = r.presses.slice().reverse().map(p => `<div><span class="${p.undo ? "mut" : p.ok === false ? "bad" : p.ok ? "ok" : ""}">+${Math.round(p.t)}s ${esc(KO[p.act])}${p.ok === true ? " ✓ 들음" : p.ok === false ? " ✗ 안 들음" : ""}</span></div>`).join("") || '<span class="mut">아직 누른 버튼 없음</span>';
+    const state = since < 0 ? '<span class="pill mut">주입 전</span>' : (inG && inU ? '<span class="pill ok">대역 안</span>' : '<span class="pill bad">대역 밖</span>');
+    t += `<tr><td>${KO[r.f]}</td><td>${KO[cause]} ${r.f !== "normal" && since > 0 ? (cause === r.f ? '<span class="ok">✓</span>' : cause === "normal" ? "" : '<span class="bad">✗</span>') : ""}</td>
+      <td style="white-space:normal;min-width:260px">${last ? KO[last.act] : "대기"} <span class="mut">· ${esc(last ? last.why : "")}</span></td>
+      <td class="n">${r.firstAt === null ? "–" : "+" + Math.round(r.firstAt) + "초"}</td>
+      <td class="n">맞음 ${fixes}${wrong ? ` · <span class="bad">잘못 ${wrong}</span>` : ""}${undos ? ` · 되돌림 ${undos}` : ""}${cleans ? ` · 클리닝 ${cleans}` : ""}</td>
+      <td class="n ${inG ? "" : "bad"}">${g.gpc_true.toFixed(3)}</td><td class="n ${inU ? "" : "bad"}">${g.uniformity_true.toFixed(2)}</td><td>${state}</td></tr>`;
+  });
+  $("sum").innerHTML = t;
+  const s0 = runs[0].sim, since = (s0.t - s0.injectTick) * SIM.DT;
+  $("clock").textContent = `시드 ${baseSeed}~${baseSeed + 5} · ` + (since < 0 ? `주입까지 ${Math.ceil(-since)}초` : `주입 후 +${Math.floor(since)}초`);
+}
+
+let acc = 0, lastT = performance.now();
+function loop(now) {
+  const dt = Math.min(0.25, (now - lastT) / 1000); lastT = now;
+  if (!paused) { acc += dt * parseInt($("spd").value, 10) / 2; const n = Math.floor(acc); if (n > 0) { acc -= n; tickAll(n); draw(); } }
+  requestAnimationFrame(loop);
+}
+$("restart").onclick = start;
+$("pause").onclick = function () { paused = !paused; this.textContent = paused ? "재개" : "일시정지"; };
+start(); requestAnimationFrame(loop);
+</script>

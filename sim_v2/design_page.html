@@ -1,0 +1,168 @@
+<title>피처 교란 지문 설계</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 설계 검토용 계측 시트: 수식 → 지문 지도 → 피처별 GPC·균일도 작은 배수 */
+:root {
+  --bg: #f4f6f5; --panel: #ffffff; --ink: #141c1a; --ink2: #4d5b57; --mut: #74817d; --line: #d9e0dd; --grid: #e9eeec;
+  --band: rgba(27, 175, 122, .10); --none: #2a78d6; --wrong: #eb6834; --fix: #1baf7a; --inj: #74817d;
+  --sans: "IBM Plex Sans KR", "Noto Sans KR", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121816; --panel: #1a211f; --ink: #e7eeeb; --ink2: #b6c3bf; --mut: #8b9a96; --line: #2e3a37; --grid: #24302d;
+  --band: rgba(25, 158, 112, .16); --none: #3987e5; --wrong: #d95926; --fix: #199e70; --inj: #8b9a96; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #121816; --panel: #1a211f; --ink: #e7eeeb; --ink2: #b6c3bf; --mut: #8b9a96; --line: #2e3a37; --grid: #24302d;
+  --band: rgba(25, 158, 112, .16); --none: #3987e5; --wrong: #d95926; --fix: #199e70; --inj: #8b9a96; color-scheme: dark }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 56px; display: grid; gap: 20px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; text-wrap: balance; }
+h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+.sub { color: var(--ink2); max-width: 70ch; margin: 4px 0 0; }
+.mono, td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; min-width: 0; }
+pre { margin: 8px 0 0; font-family: var(--mono); font-size: 12.5px; background: var(--bg); padding: 10px 12px; border-radius: 4px; overflow-x: auto; color: var(--ink2); }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 820px) { .two { grid-template-columns: minmax(0, 1fr); } }
+.tbl { overflow-x: auto; } table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; color: var(--mut); font-weight: 500; font-size: 12px; border-bottom: 1px solid var(--line); padding: 6px 8px; white-space: nowrap; }
+td { border-bottom: 1px solid var(--line); padding: 6px 8px; white-space: nowrap; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--ink2); }
+.legend i { display: inline-block; width: 18px; height: 2px; vertical-align: middle; margin-right: 6px; }
+.legend i.dash { background: repeating-linear-gradient(90deg, currentColor 0 5px, transparent 5px 9px); height: 2px; }
+.case { display: grid; gap: 8px; }
+.case .hd { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
+.case .hd .tag { font-size: 12.5px; color: var(--ink2); }
+.chart { position: relative; }
+.chart svg { width: 100%; height: auto; display: block; }
+svg text { fill: var(--mut); font-family: var(--mono); font-size: 11px; }
+svg .ttl { fill: var(--ink2); font-family: var(--sans); font-size: 12px; font-weight: 500; }
+.tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px;
+  font: 12px var(--mono); color: var(--ink); white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.tip b { font-family: var(--sans); font-weight: 600; }
+.sw { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+</style>
+
+<div class="wrap">
+  <div>
+    <h1>피처 교란 지문 설계 (시뮬레이터 v2 안)</h1>
+    <p class="sub">이상을 '곡선 모양'으로 직접 넣지 않고, 피처 하나의 실효값을 틀어지게 해서 GPC·균일도가 수식으로 따라 움직이게 했다. 피처마다 GPC 방향, 균일도 반응, 시간 모양이 서로 다르면 그래프만 보고 거꾸로 원인을 찾을 수 있다.</p>
+  </div>
+
+  <section>
+    <h2>모델</h2>
+    <pre>실효 피처ᵢ(t) = 노브 설정값ᵢ + 숨은 교란 dᵢ(t)
+GPC(t)    = 1.10 − 0.006·(T−255) + 0.08·max(0, 4.5−퍼지) − 4.0·max(0, 0.10−펄스)
+            + 0.10·(압력−1.4) + 0.25·진폭·sin(2πt/40) + 0.0003·(유량−225) [과다면 0.0004] + 잡음
+균일도(t)  = 0.90 + 0.002·|T−255| + 0.30·max(0, 4.5−퍼지) − 0.02·max(0, 퍼지−4.5)
+            + 3.0·max(0, 0.10−펄스) + 2.0·max(0, 펄스−0.10) + 1.0·진폭 + 0.3·|압력−1.4|
+            + 0.006·max(0, 225−유량) + 0.0012·max(0, 유량−225) + 잡음
+진폭      = 압력 교란 × clamp((압력 설정 − 1.2)/0.2, 0, 1)      ← 압력 설정을 2칸 낮추면 진동이 멎는다
+어떤 노브든 한 번 누르면 GPC 나 균일도 중 하나는 움직인다. 펄스·퍼지를 늘리는 쪽은 GPC 가 포화라 균일도만 움직인다</pre>
+  </section>
+
+  <div class="two">
+    <section>
+      <h2>지문 지도 — 주입 후 300초, 잡음 없는 변화량</h2>
+      <p class="sub" style="margin-bottom:8px">다섯 점이 서로 멀리 떨어져 있을수록 구분이 쉽다. 압력은 진동 진폭을 GPC 변화로 찍었다.</p>
+      <div class="chart" id="map"></div>
+    </section>
+    <section>
+      <h2>지문 표</h2>
+      <div class="tbl"><table id="sig"></table></div>
+      <p class="sub" style="font-size:12.5px">대역: GPC 1.05–1.15 (기준 1.10, ±0.05), 균일도 0.50–1.30 (기준 0.90, +0.40). 잡음 GPC σ 0.006, 균일도 σ 0.02.</p>
+    </section>
+  </div>
+
+  <section style="display:grid;gap:18px">
+    <div>
+      <h2>피처별 GPC · 균일도 (주입 −3분 ~ +7분)</h2>
+      <div class="legend" style="margin-top:6px">
+        <span style="color:var(--none)"><i style="background:var(--none)"></i><span style="color:var(--ink2)">조치 없음</span></span>
+        <span style="color:var(--fix)"><i style="background:var(--fix)"></i><span style="color:var(--ink2)">맞는 노브 3회 (+120·150·180초)</span></span>
+        <span style="color:var(--wrong)"><i class="dash"></i><span style="color:var(--ink2)">틀린 노브 3회 (같은 시각)</span></span>
+        <span><i style="background:var(--band);height:10px"></i>정상 대역</span>
+      </div>
+    </div>
+    <div id="cases" style="display:grid;gap:22px"></div>
+  </section>
+</div>
+
+<script>
+const DATA = /*__DATA__*/null;
+const KN = {temp:"온도", press:"압력", pulse:"펄스", purge:"퍼지", flow:"유량"};
+const DESC = {normal:"교란 없음", temp:"실효 온도가 서서히 떨어짐 (벽 증착 누적)", purge:"퍼지 효율이 갑자기 떨어짐 (배기 밸브)",
+  pulse:"30초 뒤부터 전구체 공급이 꺾이며 줄어듦 (버블러 고갈)", press:"압력이 40초 주기로 흔들리며 커짐 (배기 제어)", flow:"운반 유량이 줄어듦 (MFC 드리프트)"};
+const SHAPE = {temp:"완만한 상승", purge:"급등", pulse:"꺾이며 하강", press:"주기 진동", flow:"GPC 거의 그대로"};
+const btn = (k, d) => `${KN[k]} ${d > 0 ? "+" : "−"}`;
+const $ = id => document.getElementById(id);
+
+// 지문 표
+(() => {
+  let h = `<tr><th>교란 피처</th><th>GPC 변화</th><th>균일도 변화</th><th>시간 모양</th><th>GPC 대역 이탈</th><th>균일도 대역 이탈</th><th>맞는 조치</th></tr>`;
+  DATA.cases.filter(c => c.signature).forEach(c => {
+    const s = c.signature, a = s.at[2];
+    h += `<tr><td>${c.label}</td><td class="n">${c.fault === "press" ? "±" + Math.abs(a.dgpc).toFixed(3) : (a.dgpc >= 0 ? "+" : "−") + Math.abs(a.dgpc).toFixed(3)}</td>
+      <td class="n">+${a.du.toFixed(3)}</td><td>${SHAPE[c.fault]}</td>
+      <td class="n">${s.gpc_exit_s == null ? "안 벗어남" : "+" + s.gpc_exit_s + "초"}</td><td class="n">${s.u_exit_s == null ? "안 벗어남" : "+" + s.u_exit_s + "초"}</td>
+      <td>${btn(c.fix.knob, c.fix.dir)}</td></tr>`;
+  });
+  $("sig").innerHTML = h;
+})();
+
+// 지문 지도 (산점, 점마다 직접 라벨)
+(() => {
+  const W = 520, H = 330, L = 56, R = 16, T = 16, B = 40;
+  const pts = DATA.cases.filter(c => c.signature).map(c => ({ l: c.label, x: c.fault === "press" ? Math.abs(c.signature.at[2].dgpc) : c.signature.at[2].dgpc, y: c.signature.at[2].du, osc: c.fault === "press" }));
+  const X = v => L + (v + 0.16) / 0.32 * (W - L - R), Y = v => H - B - v / 0.5 * (H - T - B);
+  let g = `<rect x="${X(-0.05)}" y="${Y(0.40)}" width="${X(0.05) - X(-0.05)}" height="${Y(0) - Y(0.40)}" fill="var(--band)"/>`;
+  for (let v = -0.15; v <= 0.151; v += 0.05) g += `<line x1="${X(v)}" x2="${X(v)}" y1="${T}" y2="${H - B}" stroke="var(--grid)"/><text x="${X(v)}" y="${H - B + 16}" text-anchor="middle">${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}</text>`;
+  for (let v = 0; v <= 0.501; v += 0.1) g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"/><text x="${L - 8}" y="${Y(v) + 4}" text-anchor="end">+${v.toFixed(1)}</text>`;
+  g += `<text class="ttl" x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">GPC 변화</text><text class="ttl" x="12" y="${(T + H - B) / 2}" transform="rotate(-90 12 ${(T + H - B) / 2})" text-anchor="middle">균일도 변화</text>`;
+  g += `<text x="${X(0)}" y="${Y(0.40) - 6}" text-anchor="middle">정상 대역</text>`;
+  pts.forEach(p => {
+    g += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="7" fill="var(--none)" stroke="var(--panel)" stroke-width="2"/>`;
+    g += `<text x="${X(p.x) + 11}" y="${Y(p.y) + 4}" style="fill:var(--ink);font-family:var(--sans);font-size:12.5px;font-weight:600">${p.l}${p.osc ? " (진폭)" : ""}</text>`;
+  });
+  $("map").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="피처별 GPC·균일도 변화 산점도">${g}</svg>`;
+})();
+
+// 작은 배수: 피처마다 GPC · 균일도 두 그래프
+function lineChart(el, c, key, title, lo, hi, band, step) {
+  const W = 560, H = 210, L = 46, R = 10, T = 22, B = 26, t0 = -180, t1 = 420;
+  const X = t => L + (t - t0) / (t1 - t0) * (W - L - R), Y = v => H - B - (Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo) * (H - T - B);
+  const idx = key === "gpc" ? 1 : 2;
+  let g = `<text class="ttl" x="${L}" y="14">${title}</text>`;
+  g += `<rect x="${L}" y="${Y(band[1])}" width="${W - L - R}" height="${Y(band[0]) - Y(band[1])}" fill="var(--band)"/>`;
+  for (let v = lo; v <= hi + 1e-9; v += step) g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"/><text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${v.toFixed(2)}</text>`;
+  for (let t = -180; t <= 420; t += 60) g += `<text x="${X(t)}" y="${H - 8}" text-anchor="middle">${t === 0 ? "주입" : (t > 0 ? "+" : "−") + Math.abs(t / 60) + "분"}</text>`;
+  g += `<line x1="${X(0)}" x2="${X(0)}" y1="${T}" y2="${H - B}" stroke="var(--inj)" stroke-dasharray="3 4"/>`;
+  if (c.fix) c.fix.times.forEach(t => g += `<line x1="${X(t)}" x2="${X(t)}" y1="${H - B - 6}" y2="${H - B}" stroke="var(--ink2)" stroke-width="2"/>`);
+  const path = run => run.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[idx]).toFixed(1)).join("");
+  const order = [["none", "var(--none)", ""], ["wrong", "var(--wrong)", "6 4"], ["fix", "var(--fix)", ""]];
+  order.forEach(([k, col, dash]) => { if (c.runs[k]) g += `<path d="${path(c.runs[k])}" fill="none" stroke="${col}" stroke-width="${k === "none" ? 1.6 : 2}" ${dash ? `stroke-dasharray="${dash}"` : ""} stroke-linejoin="round"/>`; });
+  g += `<line id="x_${c.fault}_${key}" y1="${T}" y2="${H - B}" stroke="var(--ink2)" stroke-width="1" visibility="hidden"/>`;
+  g += `<rect x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="transparent" class="hit"/>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${c.label} ${title}">${g}</svg><div class="tip" hidden></div>`;
+  const svg = el.querySelector("svg"), tip = el.querySelector(".tip"), cross = el.querySelector(`#x_${c.fault}_${key}`);
+  svg.querySelector(".hit").addEventListener("pointermove", e => {
+    const r = svg.getBoundingClientRect(), sx = (e.clientX - r.left) / r.width * W;
+    const t = Math.round(t0 + (sx - L) / (W - L - R) * (t1 - t0)); const i = Math.max(0, Math.min(c.runs.none.length - 1, t - t0));
+    cross.setAttribute("x1", X(t)); cross.setAttribute("x2", X(t)); cross.setAttribute("visibility", "visible");
+    let h = `<b>${t === 0 ? "주입" : (t > 0 ? "+" : "−") + Math.abs(t) + "초"}</b>`;
+    [["none", "조치 없음", "var(--none)"], ["fix", c.fix ? btn(c.fix.knob, c.fix.dir) + " 3회" : "", "var(--fix)"], ["wrong", c.wrong ? btn(c.wrong.knob, c.wrong.dir) + " 3회" : "", "var(--wrong)"]]
+      .forEach(([k, n, col]) => { if (c.runs[k]) h += `<br><span class="sw" style="background:${col}"></span>${n} ${c.runs[k][i][idx].toFixed(3)}`; });
+    tip.innerHTML = h; tip.hidden = false;
+    const px = (e.clientX - r.left), left = px > r.width * 0.6 ? px - tip.offsetWidth - 12 : px + 12;
+    tip.style.left = left + "px"; tip.style.top = "24px";
+  });
+  svg.querySelector(".hit").addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("visibility", "hidden"); });
+}
+$("cases").innerHTML = DATA.cases.map(c => `<div class="case"><div class="hd"><h2>${c.label}${c.fault !== "normal" ? " 교란" : ""}</h2>
+  <span class="tag">${DESC[c.fault]}</span>${c.fix ? `<span class="tag">맞는 조치 <b>${btn(c.fix.knob, c.fix.dir)}</b> · 비교용 틀린 조치 ${btn(c.wrong.knob, c.wrong.dir)}</span>` : ""}</div>
+  <div class="two"><div class="chart" id="g_${c.fault}"></div><div class="chart" id="u_${c.fault}"></div></div></div>`).join("");
+DATA.cases.forEach(c => {
+  lineChart($("g_" + c.fault), c, "gpc", "GPC (Å/cycle)", 0.95, 1.30, DATA.band_gpc, 0.05);
+  lineChart($("u_" + c.fault), c, "u", "균일도 (%)", 0.60, 1.50, DATA.band_u, 0.15);
+});
+</script>

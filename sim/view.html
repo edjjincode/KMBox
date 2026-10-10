@@ -1,0 +1,1087 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>ALD 시뮬레이터 v2</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: #5a6472; }
+  body { font: 400 16px/1.3 "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+         -webkit-font-smoothing: antialiased; }
+
+  /* 1920x1080 고정 캔버스. 반응형 금지 — 좌표 맵이 깨진다. */
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden;
+           background: #e9edf2; color: #10161d; }
+  #clock { position: absolute; left: 40px; top: 30px; font-size: 26px; font-weight: 800; color: #26313d;
+           font-variant-numeric: tabular-nums; }
+  #hdr   { position: absolute; right: 40px; top: 34px; font-size: 20px; font-weight: 700; color: #55626f; }
+
+  .panel { position: absolute; background: #fff; border: 2px solid #b9c3cf; border-radius: 6px; }
+
+  /* R1 */
+  .card-label { position: absolute; left: 22px; top: 8px; font-size: 16px; font-weight: 700; color: #55626f; }
+  .card-val   { position: absolute; left: 22px; top: 28px; font-size: 40px; font-weight: 800; line-height: 1;
+                font-variant-numeric: tabular-nums; }
+  .card-unit  { position: absolute; left: 200px; top: 44px; font-size: 15px; font-weight: 600; color: #6b7684;
+                font-variant-numeric: tabular-nums; }
+  .card-right { position: absolute; right: 22px; top: 12px; text-align: right; }
+  .card-sub   { margin-top: 4px; font-size: 15px; font-weight: 700; color: #4a5766; font-variant-numeric: tabular-nums; }
+  .chip { display: inline-block; padding: 4px 14px; border-radius: 4px; font-size: 20px; font-weight: 800; border: 2px solid; }
+  .ok   { color: #0c6b2e; background: #e4f6e9; border-color: #0c6b2e; }
+  .bad  { color: #9c1c15; background: #fdeceb; border-color: #9c1c15; }
+
+  /* R3 스파크라인 */
+  .sp-label { position: absolute; left: 14px; top: 6px; font-size: 15px; font-weight: 700; color: #55626f; }
+  .sp-val   { position: absolute; right: 14px; top: 2px; font-size: 24px; font-weight: 800;
+              font-variant-numeric: tabular-nums; }
+  .sp-unit  { font-size: 15px; font-weight: 600; color: #6b7684; margin-left: 5px; }
+
+  /* R4 */
+  .btn { position: absolute; display: flex; align-items: center; justify-content: center;
+         font-size: 30px; font-weight: 800; color: #14202c; cursor: pointer; user-select: none;
+         background: #dfe6ee; border: 2px solid #7d8b9b; border-radius: 6px; }
+  .btn:active, .btn.flash { background: #ffd24d; border-color: #9a6b00; }
+  .btn.wide { font-size: 21px; background: #fde7cf; border-color: #a3641a; color: #6d3f05; }
+  .grp { position: absolute; font-size: 20px; font-weight: 700; color: #3d4a58; }
+
+  /* R5 */
+  .hdr5 { position: absolute; font-size: 16px; font-weight: 700; color: #6b7684; }
+  .log-row { position: absolute; font-size: 17px; font-weight: 600; white-space: nowrap;
+             font-variant-numeric: tabular-nums; color: #26313d; }
+  .log-t { color: #6b7684; font-weight: 700; }
+  .log-w { color: #8a4b00; font-weight: 800; }
+  .log-d { color: #4a5766; }
+  .log-empty { color: #8b95a1; }
+
+  /* 캔버스 밖 개발용 패널 — kiosk 1080 높이에서는 보이지 않는다 */
+  #dev { width: 1920px; padding: 14px 18px 26px; color: #e8edf3; font-size: 15px; }
+  #dev h3 { font-size: 15px; margin-bottom: 8px; color: #b9c6d4; font-weight: 700; }
+  #dev label { margin-right: 6px; color: #b9c6d4; }
+  #dev select, #dev input, #dev button { font: inherit; padding: 5px 9px; border-radius: 5px;
+     border: 1px solid #8794a4; background: #f2f5f8; color: #16202b; margin-right: 14px; }
+  #dev button { background: #2f6fd0; color: #fff; border-color: #2f6fd0; cursor: pointer; font-weight: 700; }
+  #gtbox { margin-top: 12px; font: 13px/1.6 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap;
+           color: #cfe0ef; background: #333d4b; padding: 10px 12px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<div id="dev">
+  <h3>개발용 패널 — 1920×1080 캔버스 바깥이라 kiosk 화면에는 잡히지 않습니다</h3>
+  <label>화면 모드</label><select id="d-ui">
+    <option value="full">full — 원본</option><option value="vlm">vlm — VLM 친화 렌더링</option><option value="vlm2">vlm2 — vlm에서 max/min 라벨 제거</option>
+    <option value="no_history">no_history</option><option value="no_knobs">no_knobs</option>
+    <option value="short_window">short_window — 1분 창</option><option value="plain">plain — GPC 선만 (진단용)</option><option value="clean">clean — 새 HMI (선만 · 15초 평활)</option></select>
+  <label>이상 유형</label><select id="d-fault"></select>
+  <label>시드</label><input id="d-seed" type="number" value="1234" style="width:92px">
+  <label>주입 tick</label><input id="d-inject" type="number" value="1300" style="width:84px">
+  <label>속도</label><select id="d-speed">
+    <option value="1">1×</option><option value="4" selected>4×</option>
+    <option value="20">20×</option><option value="60">60×</option></select>
+  <button id="d-restart">재시작</button>
+  <button id="d-pause">일시정지</button>
+  <button id="d-gt">GT 숨기기</button>
+  <div id="gtbox"></div>
+</div>
+
+<script>
+/* ---------------------------------------------------------------------------
+ * 좌표 단일 소스. 렌더링(index.html)과 드라이버가 이 파일 하나만 참조한다.
+ * 값 부분은 순수 JSON 이라 파이썬도 그대로 json.loads 로 읽는다.
+ *
+ * 버튼 y: 사양서 7절의 1010/1080 은 R4(920~1050) 안에 들어가지 않아
+ *         952/1018 로 옮겼다. x 는 7절 그대로다.
+ * ------------------------------------------------------------------------- */
+const COORDS =
+{
+  "canvas": { "w": 1920, "h": 1080 },
+
+  "regions": {
+    "R1": { "x": 40,   "y": 90,  "w": 1840, "h": 80,  "role": "현재값 카드 2개" },
+    "R2": { "x": 40,   "y": 184, "w": 1840, "h": 600, "role": "결과 그래프 2개 — 주 정보원. GPC 를 세로로 크게(패치 17개)" },
+    "R3": { "x": 40,   "y": 796, "w": 1840, "h": 112, "role": "노브 스파크라인 5개" },
+    "R4": { "x": 40,   "y": 920, "w": 1200, "h": 130, "role": "제어 버튼" },
+    "R5": { "x": 1260, "y": 920, "w": 620,  "h": 130, "role": "조치 이력" }
+  },
+
+  "crops": {
+    "R2_PLUS_R5": { "x": 40, "y": 184, "w": 1840, "h": 866 },
+    "R2_ONLY":    { "x": 40, "y": 184, "w": 1840, "h": 600 },
+    "GPC_ONLY":   { "x": 40, "y": 184, "w": 1120, "h": 600 }
+  },
+
+  "value_cards": [
+    { "key": "gpc",        "x": 40,  "y": 90, "w": 910, "h": 80 },
+    { "key": "uniformity", "x": 970, "y": 90, "w": 910, "h": 80 }
+  ],
+
+  "charts": {
+    "gpc":        { "x": 40, "y": 188, "w": 1840, "h": 468, "ymin": 0.80, "ymax": 1.50 },
+    "uniformity": { "x": 40, "y": 658, "w": 1840, "h": 124, "ymin": 0.40, "ymax": 1.80 }
+  },
+
+  "_charts_clean_note": "ui=clean: 선만 남긴 차트. GPC 는 ChartQA 비율로 크게, 균일도는 떨어진 별도 상자. 좌표는 R2 안.",
+  "charts_clean": {
+    "gpc":        { "x": 40,   "y": 184, "w": 1120, "h": 600, "ymin": 0.95, "ymax": 1.35 },
+    "uniformity": { "x": 1200, "y": 184, "w": 680,  "h": 600, "ymin": 0.40, "ymax": 1.80 }
+  },
+
+  "sparklines": [
+    { "key": "temp", "x": 40, "y": 796, "w": 352, "h": 112 },
+    { "key": "press", "x": 412, "y": 796, "w": 352, "h": 112 },
+    { "key": "pulse", "x": 784, "y": 796, "w": 352, "h": 112 },
+    { "key": "purge", "x": 1156, "y": 796, "w": 352, "h": 112 },
+    { "key": "flow", "x": 1528, "y": 796, "w": 352, "h": 112 }
+  ],
+
+  "buttons": {
+    "temp_down":     { "x": 310,  "y": 952,  "w": 56,  "h": 56, "label": "−", "knob": "temp",  "dir": -1 },
+    "temp_up":       { "x": 380,  "y": 952,  "w": 56,  "h": 56, "label": "+",      "knob": "temp",  "dir":  1 },
+    "press_down":    { "x": 710,  "y": 952,  "w": 56,  "h": 56, "label": "−", "knob": "press", "dir": -1 },
+    "press_up":      { "x": 780,  "y": 952,  "w": 56,  "h": 56, "label": "+",      "knob": "press", "dir":  1 },
+    "pulse_down":    { "x": 1110, "y": 952,  "w": 56,  "h": 56, "label": "−", "knob": "pulse", "dir": -1 },
+    "pulse_up":      { "x": 1180, "y": 952,  "w": 56,  "h": 56, "label": "+",      "knob": "pulse", "dir":  1 },
+    "purge_down":    { "x": 310,  "y": 1018, "w": 56,  "h": 56, "label": "−", "knob": "purge", "dir": -1 },
+    "purge_up":      { "x": 380,  "y": 1018, "w": 56,  "h": 56, "label": "+",      "knob": "purge", "dir":  1 },
+    "flow_down":     { "x": 710,  "y": 1018, "w": 56,  "h": 56, "label": "−", "knob": "flow",  "dir": -1 },
+    "flow_up":       { "x": 780,  "y": 1018, "w": 56,  "h": 56, "label": "+",      "knob": "flow",  "dir":  1 },
+    "request_clean": { "x": 1080, "y": 1018, "w": 200, "h": 56, "label": "클리닝 요청", "knob": null, "dir": 0 }
+  },
+
+  "button_groups": [
+    { "knob": "temp",  "x": 80,  "y": 952  },
+    { "knob": "press", "x": 480, "y": 952  },
+    { "knob": "pulse", "x": 880, "y": 952  },
+    { "knob": "purge", "x": 80,  "y": 1018 },
+    { "knob": "flow",  "x": 480, "y": 1018 }
+  ],
+
+  "actions": [
+    "temp_down", "temp_up", "press_down", "press_up", "pulse_down", "pulse_up",
+    "purge_down", "purge_up", "flow_down", "flow_up", "request_clean", "noop"
+  ]
+}
+;
+if (typeof module !== "undefined") module.exports = COORDS;
+if (typeof window !== "undefined") window.COORDS = COORDS;
+
+</script>
+
+<!-- =========================================================================
+     시뮬레이터 엔진 — 상수의 단일 소스.
+
+     설계 원칙(사양서 4.1): 노브 값에서 지표를 계산하는 물리 모델을 두지 않는다.
+     시나리오가 이상 곡선을 직접 만들고, 노브 조작은 그 곡선을 상쇄만 한다.
+     화면의 노브는 설정값만 보여주며 항상 정상 범위다. 따라서 노브를 읽어서
+     그래프를 역산할 방법이 없고, 그래프를 읽지 않으면 문제를 풀 수 없다.
+
+     표시값 = 기준값 + 이상성분 + 제어성분 + 부작용 + 노이즈
+     ========================================================================= -->
+<script id="sim-engine">
+/* ===========================================================================
+ * 시뮬레이터 v2 엔진 — 피처(실효 공정값)가 GPC·균일도를 만든다. (설계: sim_v2/model.py)
+ *
+ *   실효 피처 = 노브 설정값 + 숨은 교란 d(t)
+ *   GPC      = 1.10 + Σ 피처별 GPC 항 + 잡음
+ *   균일도    = 0.90 + Σ 피처별 균일도 항 + 잡음
+ *
+ * 이상 = 피처 하나에 교란을 넣는 것. 노브를 누르면 실효 피처가 바뀌어 같은 식으로 지표가 움직인다.
+ * 화면(app 블록)은 v1 과 같은 API(Sim·tick·view·gt·apply·hitTest)만 쓴다.
+ * =========================================================================== */
+(function (root) {
+"use strict";
+
+const DT = 0.5, WINDOW_TICKS = 1200, PREROLL_TICKS = 1200, EPISODE_TICKS = PREROLL_TICKS + 1200;
+const CHART_POINTS = 120, ACTION_DWELL_S = 30;
+const GPC_BASE = 1.10, GPC_BAND = [1.05, 1.15], U_BASE = 0.90, U_BAND = [0.50, 1.30];
+const GPC_NOISE = 0.006, U_NOISE = 0.02, OSC_PERIOD_S = 40;
+
+const KNOBS = {
+  temp:  { base: 255,  step: 5,    min: 230,  max: 280,  dp: 0, unit: "°C",   label: "온도" },
+  press: { base: 1.4,  step: 0.1,  min: 0.8,  max: 2.2,  dp: 1, unit: "Torr", label: "압력" },
+  pulse: { base: 0.10, step: 0.01, min: 0.04, max: 0.20, dp: 2, unit: "s",    label: "펄스" },
+  purge: { base: 4.5,  step: 0.5,  min: 2.0,  max: 9.0,  dp: 1, unit: "s",    label: "퍼지" },
+  flow:  { base: 225,  step: 25,   min: 100,  max: 400,  dp: 0, unit: "sccm", label: "유량" }
+};
+const KNOB_ORDER = ["temp", "press", "pulse", "purge", "flow"];
+// 정상 범위(공정 창). 창 안에서는 지표가 조금만 움직이고, 하한·상한을 넘으면 가파르게 나빠진다.
+const WINDOW = { temp: [245, 265], press: [1.2, 1.6], pulse: [0.08, 0.14], purge: [3.5, 6.0], flow: [175, 300] };
+const CORRECTION_LIMIT = { temp: 265, press: 1.6, pulse: 0.14, purge: 6.0, flow: 300 };   // 화면의 '상한' = 창 위쪽 끝
+function limitOf(k) { return WINDOW[k][1]; }
+
+// 이상 = 교란이 들어가는 피처. normal 은 교란 없음
+const FAULT_TYPES = ["normal", "temp", "purge", "pulse", "press", "flow"];
+const MECHANISM = {
+  normal: "정상 — 교란 없음",
+  temp:   "온도 — 벽 증착 누적으로 실효 온도가 서서히 떨어짐",
+  purge:  "퍼지 — 배기 밸브 이상으로 퍼지 효율이 갑자기 떨어짐",
+  pulse:  "펄스 — 버블러 고갈로 30초 뒤부터 전구체 공급이 꺾이며 줄어듦",
+  press:  "압력 — 배기 제어 불안정으로 압력이 40초 주기로 흔들리며 커짐",
+  flow:   "유량 — MFC 드리프트로 운반 유량이 줄어듦"
+};
+// 맞는 조치: 교란 피처를 되돌리는 방향
+const FIX = { temp: "temp_up", purge: "purge_up", pulse: "pulse_up", press: "press_down", flow: "flow_up" };
+
+function smooth(x) { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); }
+/** 숨은 교란 d(s). s = 주입 후 초 */
+/** 숨은 교란 d(s). s = 주입 후 초. 실제값을 하한(압력은 양쪽 한계) 쪽으로 끌고 가서 넘긴다 */
+function disturb(fault, s) {
+  if (s < 0) return 0;
+  switch (fault) {
+    case "temp":  return -Math.min(30, 20 * s / 200);                 // 255 → 245(하한) 100초 → 235(150초)
+    case "purge": return -2.0 * (1 - Math.exp(-s / 5));               // 4.5 → 2.5 (하한 3.5 아래로 급락)
+    case "pulse": return -0.04 * smooth((s - 30) / 120);              // 0.10 → 0.06 (하한 0.08 아래로 꺾여 내려감)
+    case "press": return 0.24 * (1 - Math.exp(-s / 60));              // 1.4 ± 0.24 → 1.16~1.64 (양쪽 한계를 오감)
+    case "flow":  return -100 * (1 - Math.exp(-s / 40));              // 225 → 125 (하한 175 아래로)
+    default:      return 0;
+  }
+}
+const lo = function (k, v) { return Math.max(0, WINDOW[k][0] - v); };   // 하한을 넘은 만큼
+const hi = function (k, v) { return Math.max(0, v - WINDOW[k][1]); };   // 상한을 넘은 만큼
+/** 피처 → 지표 항. 창 안 = 완만한 기울기(버튼을 누르면 보이는 정도), 창 밖 = 가파른 기울기 */
+function gpcTerms(e, amp, tS) {
+  return {
+    temp:  -0.002 * (e.temp - 255) + 0.008 * lo("temp", e.temp) - 0.006 * hi("temp", e.temp),   // 하한 아래: 응축 → GPC↑, 상한 위: 탈착 → GPC↓
+    purge:  0.02 * Math.max(0, 4.5 - e.purge) + 0.10 * lo("purge", e.purge),                      // 퍼지 부족 → 잔류 가스 CVD → GPC↑ (넉넉하면 포화)
+    pulse: -1.0 * Math.max(0, 0.10 - e.pulse) - 5.0 * lo("pulse", e.pulse),                       // 전구체 부족 → 미포화 → GPC↓ (넉넉하면 포화)
+    press:  0.10 * (e.press - 1.4) + 0.25 * amp * Math.sin(2 * Math.PI * tS / OSC_PERIOD_S),      // 압력↑ → 체류↑ → GPC↑, 진동은 그대로 GPC 진동
+    flow:   (e.flow >= 225 ? 0.0004 : 0.0003) * (e.flow - 225)
+  };
+}
+function uTerms(e, amp) {
+  return {
+    temp:  0.002 * Math.abs(e.temp - 255) + 0.004 * lo("temp", e.temp) + 0.03 * hi("temp", e.temp),
+    purge: 0.05 * Math.max(0, 4.5 - e.purge) + 0.40 * lo("purge", e.purge) - 0.02 * Math.max(0, e.purge - 4.5),
+    pulse: 0.5 * Math.max(0, 0.10 - e.pulse) + 3.0 * lo("pulse", e.pulse) + 2.0 * Math.max(0, e.pulse - 0.10) + 4.0 * hi("pulse", e.pulse),
+    press: 1.0 * amp + 0.3 * Math.abs(e.press - 1.4) + 1.0 * (lo("press", e.press) + hi("press", e.press)),
+    flow:  0.002 * Math.max(0, 225 - e.flow) + 0.007 * lo("flow", e.flow) + 0.0012 * Math.max(0, e.flow - 225) + 0.005 * hi("flow", e.flow)
+  };
+}
+const sum = function (o) { let s = 0; for (const k in o) s += o[k]; return s; };
+
+function mulberry32(a) {
+  return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+function Sim(opts) {
+  opts = opts || {};
+  this.seed = opts.seed || 1; this.faultType = FAULT_TYPES.indexOf(opts.faultType) >= 0 ? opts.faultType : "normal";
+  this.injectTick = opts.injectTick != null ? opts.injectTick : PREROLL_TICKS;
+  this.rand = mulberry32(this.seed);
+  const r = this.rand; let spare = null;
+  this.gauss = function () { if (spare !== null) { const s = spare; spare = null; return s; }
+    let u = 0, v = 0; while (u === 0) u = r(); v = r(); const m = Math.sqrt(-2 * Math.log(u));
+    spare = m * Math.sin(2 * Math.PI * v); return m * Math.cos(2 * Math.PI * v); };
+  this.t = 0; this.clockS = 9 * 3600 + Math.floor(this.rand() * 3600);
+  this.knobs = {}; this.knobSeries = {}; this.effSeries = {};
+  for (const k of KNOB_ORDER) { this.knobs[k] = KNOBS[k].base; this.knobSeries[k] = []; this.effSeries[k] = []; }
+  this.gpcSeries = []; this.uSeries = []; this.actionLog = []; this.pending = null;
+  this.wobG = 0; this.wobU = 0; this.cleanRequested = false;
+  this.state();
+}
+
+/** 지금 노브·교란으로 실효 피처와 지표(잡음 없는 값)를 계산한다. */
+Sim.prototype.state = function () {
+  const s = (this.t - this.injectTick) * DT, d = disturb(this.faultType, s);
+  const e = Object.assign({}, this.knobs);
+  if (this.faultType !== "press" && this.faultType !== "normal") e[this.faultType] += d;
+  const amp = this.faultType === "press" ? d * Math.min(1, Math.max(0, (this.knobs.press - 1.2) / 0.2)) : 0;
+  const tg = gpcTerms(e, amp, this.t * DT), tu = uTerms(e, amp);
+  this.dist = d; this.eff = e; this.amp = amp; this.termsG = tg; this.termsU = tu;
+  this.gpcTrue = GPC_BASE + sum(tg); this.uTrue = U_BASE + sum(tu);
+};
+
+/** 화면에 보여 줄 실효 피처 — 압력은 진동 진폭만큼 실제로 흔들린다 */
+Sim.prototype.effView = function () {
+  const e = Object.assign({}, this.eff);
+  e.press = this.knobs.press + this.amp * Math.sin(2 * Math.PI * this.t * DT / OSC_PERIOD_S);
+  return e;
+};
+
+Sim.prototype.tick = function () {
+  this.t++; this.clockS += DT;
+  this.state();
+  this.wobG = 0.985 * this.wobG + this.gauss() * 0.0018;
+  this.wobU = 0.985 * this.wobU + this.gauss() * 0.0057;
+  this.gpcDisplay = this.gpcTrue + this.wobG + this.gauss() * GPC_NOISE;
+  this.uDisplay = this.uTrue + this.wobU + this.gauss() * U_NOISE;
+  this.gpcSeries.push(this.gpcDisplay); this.uSeries.push(this.uDisplay);
+  const ev = this.effView();
+  for (const k of KNOB_ORDER) { this.knobSeries[k].push(this.knobs[k]); this.effSeries[k].push(ev[k]); }
+  if (this.pending) {
+    this.pending.remainingS -= DT;
+    if (this.pending.remainingS <= 0) this.settle();
+  }
+};
+
+/** 대기 끝: 대역까지의 거리가 줄었는지로 결과를 적는다. */
+Sim.prototype.settle = function () {
+  const p = this.pending, e = this.actionLog[p.logIndex];
+  // 목표값(1.10 / 0.90)까지의 거리 — 대역 안에서 움직여도 나아졌는지 보인다 (균일도는 GPC 의 약 3배로 움직여 1/3 로 맞춘다)
+  const dist = function (g, u) { return Math.abs(g - GPC_BASE) + Math.max(0, u - U_BASE) / 3; };
+  const before = dist(p.gpcAtPress, p.uAtPress), after = dist(this.gpcTrue, this.uTrue);
+  const ampGain = p.ampAtPress - this.amp;
+  e.status = "완료";
+  e.outcome = (before - after > 0.008 || ampGain > 0.02) ? "개선" : (after - before > 0.008 ? "악화" : "변화 없음");
+  this.pending = null;
+};
+
+Sim.prototype.clockStr = function () {
+  const s = Math.floor(this.clockS % 86400), two = function (n) { return String(n).padStart(2, "0"); };
+  return two(Math.floor(s / 3600)) + ":" + two(Math.floor((s % 3600) / 60)) + ":" + two(s % 60);
+};
+
+Sim.prototype.apply = function (actionId) {
+  if (!actionId || actionId === "noop") return { ok: true, applied: "noop" };
+  const base = { tick: this.t, time: this.clockStr(), id: actionId, outcome: "" };
+  const pend = (idx) => { this.pending = { id: actionId, remainingS: ACTION_DWELL_S, gpcAtPress: this.gpcTrue,
+                                          uAtPress: this.uTrue, ampAtPress: this.amp, logIndex: idx }; };
+  if (actionId === "request_clean") {
+    this.cleanRequested = true;
+    pend(this.actionLog.push(Object.assign(base, { text: "클리닝 요청", mark: "클리닝", status: "접수" })) - 1);
+    return { ok: true, applied: actionId };
+  }
+  const btn = COORDS.buttons[actionId];
+  if (!btn || !btn.knob) return { ok: false, reason: "unknown action: " + actionId };
+  const spec = KNOBS[btn.knob], rawV = this.knobs[btn.knob] + btn.dir * spec.step;
+  const next = Math.min(spec.max, Math.max(spec.min, rawV));
+  this.knobs[btn.knob] = +(Math.round(next / spec.step) * spec.step).toFixed(4);
+  const hitLimit = Math.abs(next - rawV) > 1e-9, sign = btn.dir > 0 ? "+" : "−";
+  pend(this.actionLog.push(Object.assign(base, { text: spec.label + " " + sign + spec.step.toFixed(spec.dp),
+    mark: spec.label + sign, status: hitLimit ? "한계" : "대기" })) - 1);
+  this.state();
+  return { ok: true, applied: actionId, hitLimit: hitLimit };
+};
+
+Sim.prototype.hitTest = function (x, y) {
+  for (const id in COORDS.buttons) {
+    const b = COORDS.buttons[id];
+    if (x >= b.x - b.w / 2 && x <= b.x + b.w / 2 && y >= b.y - b.h / 2 && y <= b.y + b.h / 2) return id;
+  }
+  return null;
+};
+
+const TOL_G = 0.03, TOL_U = 0.15;   // 잡음(σ GPC 0.006 · 균일도 0.02)의 5배 이상이어야 '화면에 보인다'
+/** 정답 조치. 교란 피처의 영향이 화면에 보일 만큼이면 그 피처를 되돌린다. 아니면 엉뚱하게 바꿔 둔 노브를 되돌린다. */
+Sim.prototype.correctAction = function () {
+  if (this.pending) return "noop";
+  const f = this.faultType;
+  if (f !== "normal" && this.t >= this.injectTick) {
+    const g = this.termsG[f], u = this.termsU[f];
+    const vis = f === "press" ? this.amp * 0.25 > 0.02 : (Math.abs(g) > TOL_G || u > TOL_U);
+    if (vis) {
+      if (f === "temp" && g < -TOL_G) return "temp_down";        // 온도를 너무 올려 반대로 넘어감
+      return FIX[f];
+    }
+  }
+  for (const k of KNOB_ORDER) {                                 // 교란 피처가 아닌데 바꿔 둔 노브
+    if (k === f || this.knobs[k] === KNOBS[k].base) continue;
+    if (Math.abs(this.termsG[k]) > TOL_G / 2 || this.termsU[k] > TOL_U / 2) return k + (this.knobs[k] > KNOBS[k].base ? "_down" : "_up");
+  }
+  return "noop";
+};
+
+Sim.prototype.rationale = function () {
+  if (this.pending) return "직전 조치가 반영되는 중이다. 결과를 기다린다.";
+  const a = this.correctAction();
+  return MECHANISM[this.faultType] + (a === "noop" ? " — 조치 불필요." : " — " + a + " 필요.");
+};
+
+function downsample(series, points, windowTicks) {
+  const start = Math.max(0, series.length - windowTicks), win = series.slice(start), out = [], n = win.length;
+  if (n === 0) return out;
+  const bucket = Math.max(1, Math.ceil(windowTicks / points));
+  for (let i = 0; i < n; i += bucket) {
+    const end = Math.min(i + bucket, n); let s = 0, lo = Infinity, hi = -Infinity;
+    for (let j = i; j < end; j++) { const v = win[j]; s += v; if (v < lo) lo = v; if (v > hi) hi = v; }
+    out.push({ v: s / (end - i), lo: lo, hi: hi, tick: start + i });
+  }
+  return out;
+}
+function downsampleStep(series, points, windowTicks) {
+  const start = Math.max(0, series.length - windowTicks), win = series.slice(start), out = [], n = win.length;
+  const bucket = Math.max(1, Math.ceil(windowTicks / points));
+  for (let i = 0; i < n; i += bucket) out.push({ v: win[Math.min(i + bucket, n) - 1], tick: start + i });
+  return out;
+}
+
+Sim.prototype.view = function (windowTicks, points) {
+  const W = windowTicks || WINDOW_TICKS, NP = points || CHART_POINTS;
+  const winStart = Math.max(0, this.gpcSeries.length - W), knobPoints = {};
+  const effPoints = {};
+  for (const k of KNOB_ORDER) { knobPoints[k] = downsampleStep(this.knobSeries[k], NP, W); effPoints[k] = downsample(this.effSeries[k], NP, W); }
+  return {
+    t: this.t, clock: this.clockStr(), gpc: this.gpcDisplay, uniformity: this.uDisplay,
+    gpcPoints: downsample(this.gpcSeries, NP, W), uPoints: downsample(this.uSeries, NP, W),
+    knobPoints: knobPoints, knobs: Object.assign({}, this.knobs), effPoints: effPoints, eff: this.effView(), oscAmp: this.amp,
+    markers: this.actionLog.filter(function (e) { return e.tick >= winStart; })
+                           .map(function (e) { return { frac: (e.tick - winStart) / W, mark: e.mark }; }),
+    pending: this.pending ? { id: this.pending.id, remainingS: Math.max(0, this.pending.remainingS) } : null,
+    log: this.actionLog.slice(-8).reverse(), windowTicks: W, seriesLen: this.gpcSeries.length
+  };
+};
+
+const r4 = function (o) { const out = {}; for (const k in o) out[k] = +(+o[k]).toFixed(4); return out; };
+Sim.prototype.gt = function () {
+  return {
+    t: this.t, seed: this.seed, fault_type: this.faultType, inject_tick: this.injectTick,
+    gpc_true: +this.gpcTrue.toFixed(4), gpc_display: +(this.gpcDisplay ?? this.gpcTrue).toFixed(4),
+    uniformity_true: +this.uTrue.toFixed(4), uniformity: +(this.uDisplay ?? this.uTrue).toFixed(4),
+    knobs: Object.assign({}, this.knobs), disturbance: +this.dist.toFixed(4), effective: r4(this.eff),
+    osc_amp: +this.amp.toFixed(4), terms_gpc: r4(this.termsG), terms_u: r4(this.termsU),
+    correct_action: this.correctAction(), rationale: this.rationale(),
+    pending_action: this.pending ? { id: this.pending.id, remaining_s: +this.pending.remainingS.toFixed(1) } : null
+  };
+};
+
+root.SIM = {
+  Sim: Sim, downsample: downsample, limitOf: limitOf, disturb: disturb, gpcTerms: gpcTerms, uTerms: uTerms,
+  DT: DT, WINDOW_TICKS: WINDOW_TICKS, PREROLL_TICKS: PREROLL_TICKS, EPISODE_TICKS: EPISODE_TICKS,
+  CHART_POINTS: CHART_POINTS, ACTION_DWELL_S: ACTION_DWELL_S,
+  GPC_BASE: GPC_BASE, GPC_BAND: GPC_BAND, U_BASE: U_BASE, U_BAND: U_BAND,
+  KNOBS: KNOBS, KNOB_ORDER: KNOB_ORDER, CORRECTION_LIMIT: CORRECTION_LIMIT, WINDOW: WINDOW,
+  FAULT_TYPES: FAULT_TYPES, MECHANISM: MECHANISM, FIX: FIX
+};
+if (typeof module !== "undefined") module.exports = root.SIM;
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+
+<!-- =========================================================================
+     화면. 좌표를 스스로 정하지 않는다 — 전부 COORDS 에서 읽는다.
+     ========================================================================= -->
+<script id="app">
+"use strict";
+const stage = document.getElementById("stage");
+const P = new URLSearchParams(location.search || "ui=clean&labels=both&fault=normal&seed=7&inject=1500&adv=0");
+
+// ?labels= : 퍼지/펄스 표시 이름만 바꾼다 (E6 — grounding 실패가 라벨 탓인지 보는 실험).
+//   ko(기본) 퍼지·펄스 | both 퍼지 Purge·펄스 Pulse | en Purge·Pulse
+// 좌표·동작·엔진은 건드리지 않는다. 다른 노브 이름도 그대로 둬 변수를 하나로 묶는다.
+(function () {
+  const SETS = { both: { pulse: "펄스 Pulse", purge: "퍼지 Purge" }, en: { pulse: "Pulse", purge: "Purge" } };
+  const L = SETS[P.get("labels")];
+  if (L) for (const k in L) SIM.KNOBS[k].label = L[k];
+})();
+
+// 화면 모드: URL ?ui= 가 우선, 없으면 개발 패널에서 고른 값(localStorage). 아티팩트 뷰어처럼
+// URL 파라미터가 전달되지 않는 환경을 위해 둔다.
+let savedUI = null;
+try { savedUI = localStorage.getItem("ald_ui"); } catch (e) {}
+let UI, SHOW, VLM, MARKS, PLAIN, CLEAN, PLAIN_CFG, POINTS, SMOOTH, ENVFAINT, YZOOM, BOLD, GPC_CFG, GPC_TICKS, LINE_W, ENV_OP;
+function setMode(mode) {
+  UI = mode;                                       // 6.7 ablation + vlm
+  SHOW = { history: UI !== "no_history", knobs: UI !== "no_knobs",
+           window: UI === "short_window" ? 120 : SIM.WINDOW_TICKS };
+  // ui=vlm : E1/E3/외부 데이터 교차 확인 결과를 반영한 VLM 친화 렌더링. 레이아웃·좌표는 그대로.
+  //   y축 확대 + 굵은 선 / 허용 띠 채움→가장자리 점선 / 엔벨로프 채움→hi/lo 윤곽선 / max·min 마커+값 / x 눈금 1 분
+  VLM   = UI === "vlm" || UI === "vlm2" || UI === "plain" || UI === "clean";   // vlm2 = vlm 에서 max/min 마커·라벨만 뺀 것
+  MARKS = UI === "vlm";
+  // plain: 진단용. GPC 선 하나만 ChartQA 꺾은선 크기로. 띠·엔벨로프·현재값 라벨·균일도 전부 없음.
+  //   ?ui=plain&pw=900&ph=560&points=24
+  PLAIN = UI === "plain";
+  // clean: 측정 근거로 다시 짠 HMI. 차트 안에는 선만(띠·엔벨로프·현재값 라벨 없음), GPC 와 균일도는 떨어진 상자.
+  CLEAN = UI === "clean";
+  PLAIN_CFG = { x: 40, y: 184, w: parseInt(P.get("pw") || "900", 10), h: parseInt(P.get("ph") || "560", 10), ymin: 0.95, ymax: 1.35 };
+  POINTS = parseInt(P.get("points") || "0", 10) || null;
+  // 평균선 이동평균 창(버킷). clean 은 3(=15초) 이 기본 — 잔물결을 죽여야 normal 을 normal 로 읽는다(측정 근거).
+  SMOOTH = parseInt(P.get("smooth") || (UI === "clean" ? "3" : "1"), 10);
+  ENVFAINT = P.get("envfaint") === "1";                   // clean/plain 에서 옅은 채움 엔벨로프만
+  YZOOM = VLM || P.get("yzoom") === "1";
+  BOLD  = VLM || P.get("bold") === "1";
+  GPC_CFG = YZOOM ? Object.assign({}, COORDS.charts.gpc, { ymin: 0.95, ymax: 1.35 }) : COORDS.charts.gpc;
+  const TICK = parseFloat(P.get("tick") || (VLM ? "0.05" : "0.1"));   // ?tick=0.02 로 눈금 간격 실험
+  GPC_TICKS = [];
+  if (YZOOM) { for (let v = 0.95; v <= 1.35 + 1e-9; v += TICK) GPC_TICKS.push(+v.toFixed(3)); }
+  else GPC_TICKS = [0.9, 1.1, 1.3, 1.5];
+  LINE_W = BOLD ? 4 : 2.5; ENV_OP = BOLD ? .40 : .20;
+}
+setMode(P.get("ui") || savedUI || "full");
+const BUILD = "v2-window";
+const NS = "http://www.w3.org/2000/svg";
+
+function el(tag, cls, css, txt) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (css) Object.assign(e.style, css);
+  if (txt !== undefined) e.textContent = txt;
+  return e;
+}
+function box(r) { return { left: r.x + "px", top: r.y + "px", width: r.w + "px", height: r.h + "px" }; }
+function mkSvg(cfg) {
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("width", cfg.w); svg.setAttribute("height", cfg.h);
+  svg.setAttribute("viewBox", "0 0 " + cfg.w + " " + cfg.h);
+  Object.assign(svg.style, { position: "absolute", left: cfg.x + "px", top: cfg.y + "px" });
+  stage.appendChild(svg);
+  return svg;
+}
+function winLabel() {
+  const m = SHOW.window * SIM.DT / 60;
+  return m >= 1 ? m.toFixed(0) + "분" : (m * 60).toFixed(0) + "초";
+}
+// 모든 그래프가 공유하는 시간축. 창이 덜 찼으면 오른쪽에 붙여 그린다.
+function timeAxis(pts, x0, x1) {
+  const full = Math.ceil(SHOW.window / Math.max(1, Math.ceil(SHOW.window / (POINTS || SIM.CHART_POINTS))));
+  const n = Math.max(pts.length, full), off = n - pts.length;
+  return function (i) { return n <= 1 ? x1 : x0 + (x1 - x0) * (off + i) / (n - 1); };
+}
+
+const LOG_ROWS = 4;
+const R = COORDS.regions;
+let refs = {};
+let svgG, svgU;
+function buildStage() {
+  stage.replaceChildren(); refs = {};
+  if (PLAIN) {
+    stage.appendChild(el("div", "panel", box(PLAIN_CFG)));
+    svgG = mkSvg(PLAIN_CFG); svgG.id = "chart-gpc";
+    svgU = null; return;
+  }
+  const CH = CLEAN ? COORDS.charts_clean : COORDS.charts;
+
+stage.appendChild(el("div", null, { id: "clock" })).id = "clock";
+stage.appendChild(el("div", null, { id: "hdr" }, "ALD-01  ·  공정 감시  ·  " + UI + "  ·  " + BUILD)).id = "hdr";
+refs.clock = document.getElementById("clock");
+
+/* ------------------------------------------------------------------ R1 현재값 카드 */
+COORDS.value_cards.forEach(function (c) {
+  const p = el("div", "panel", box(c)); stage.appendChild(p);
+  const isG = c.key === "gpc";
+  p.appendChild(el("div", "card-label", {}, isG ? "GPC · 사이클당 성장률" : "균일도 · 웨이퍼 내 편차"));
+  const v = el("div", "card-val", {}, "—"); p.appendChild(v);
+  p.appendChild(el("div", "card-unit", {},
+    isG ? "Å/cycle  ·  목표 1.100  ·  허용 1.050 – 1.150" : "%  ·  목표 0.900  ·  허용 0.500 – 1.300"));
+  const right = el("div", "card-right"); p.appendChild(right);
+  const chip = el("span", "chip ok", {}, "—"); right.appendChild(chip);
+  const sub = el("div", "card-sub", {}, ""); right.appendChild(sub);
+  refs[c.key] = { v: v, chip: chip, sub: sub };
+});
+
+/* ------------------------------------------------------------------ R2 결과 그래프 */
+if (CLEAN) { stage.appendChild(el("div", "panel", box(CH.gpc))); stage.appendChild(el("div", "panel", box(CH.uniformity))); }
+else stage.appendChild(el("div", "panel", box(R.R2)));
+svgG = mkSvg(CH.gpc);        svgG.id = "chart-gpc";   // 프로브가 SVG 에서 정답 좌표를 읽는다
+svgU = mkSvg(CH.uniformity); svgU.id = "chart-u";
+
+
+/* ------------------------------------------------------------------ R3 노브 스파크라인 */
+if (SHOW.knobs) {
+  COORDS.sparklines.forEach(function (c) {
+    const p = el("div", "panel", box(c)); stage.appendChild(p);
+    const spec = SIM.KNOBS[c.key];
+    const lab = el("div", "sp-label", {}, spec.label); p.appendChild(lab);
+    const v = el("div", "sp-val", {}, "—");
+    const u = el("span", "sp-unit", {}, spec.unit);
+    p.appendChild(v); v.appendChild(u);
+    const svg = mkSvg(c);
+    svg.style.pointerEvents = "none";
+    refs["sp_" + c.key] = { v: v, svg: svg, cfg: c, spec: spec, lab: lab };
+  });
+}
+
+
+/* ------------------------------------------------------------------ R4 제어 버튼 */
+stage.appendChild(el("div", "panel", box(R.R4)));
+COORDS.button_groups.forEach(function (g) {
+  const spec = SIM.KNOBS[g.knob];
+  stage.appendChild(el("div", "grp", { left: g.x + "px", top: (g.y - 13) + "px", width: "220px" },
+    spec.label + " (" + spec.unit + ")"));
+});
+for (const id in COORDS.buttons) {
+  const b = COORDS.buttons[id];
+  const e = el("div", "btn" + (b.w > 100 ? " wide" : ""),
+    { left: (b.x - b.w / 2) + "px", top: (b.y - b.h / 2) + "px", width: b.w + "px", height: b.h + "px" }, b.label);
+  e.dataset.action = id;
+  e.addEventListener("mousedown", function () { clickAt(b.x, b.y); });
+  stage.appendChild(e);
+  refs["btn_" + id] = e;
+}
+
+/* ------------------------------------------------------------------ R5 조치 이력 */
+if (SHOW.history) {
+  stage.appendChild(el("div", "panel", box(R.R5)));
+  stage.appendChild(el("div", "hdr5", { left: (R.R5.x + 16) + "px", top: (R.R5.y + 7) + "px" }, "조치 이력"));
+  for (let i = 0; i < LOG_ROWS; i++) {
+    const row = el("div", "log-row", { left: (R.R5.x + 16) + "px", top: (R.R5.y + 30 + i * 24) + "px" });
+    stage.appendChild(row); refs["log" + i] = row;
+  }
+}
+
+}
+const SP_PAD = { l: 66, r: 14, t: 34, b: 20 };
+function drawChart(svg, cfg, pts, opt) {
+  const pad = opt.pad, x0 = pad.l, x1 = cfg.w - pad.r, y0 = pad.t, y1 = cfg.h - pad.b;
+  const sy = function (v) {
+    const c = Math.min(cfg.ymax, Math.max(cfg.ymin, v));
+    return y1 - (y1 - y0) * (c - cfg.ymin) / (cfg.ymax - cfg.ymin);
+  };
+  const sx = timeAxis(pts, x0, x1);
+  const N = [];
+  const add = function (t, a, txt) {
+    const e = document.createElementNS(NS, t);
+    for (const k in a) e.setAttribute(k, a[k]);
+    if (txt !== undefined) e.textContent = txt;
+    N.push(e); return e;
+  };
+
+  add("rect", { x: x0, y: y0, width: x1 - x0, height: y1 - y0, fill: "#fbfcfd", stroke: "#d4dbe3" });
+  // 허용 대역을 옅은 띠로(6.3) — 눈금 읽기보다 판독이 안정적이다
+  if (opt.plain) {
+    // 없음
+  } else if (VLM) {
+    [opt.band[0], opt.band[1]].forEach(function (bv) {
+      add("line", { x1: x0, x2: x1, y1: sy(bv), y2: sy(bv), stroke: "#1f9d55", "stroke-width": 2, "stroke-dasharray": "4 6", "stroke-opacity": .9 });
+    });
+  } else {
+    add("rect", { x: x0, y: sy(opt.band[1]), width: x1 - x0, height: sy(opt.band[0]) - sy(opt.band[1]),
+                  fill: "#1f9d55", "fill-opacity": .13 });
+  }
+  if (!opt.plain) add("line", { x1: x0, x2: x1, y1: sy(opt.target), y2: sy(opt.target), stroke: "#0c6b2e",
+                "stroke-width": 2, "stroke-dasharray": "9 7", "stroke-opacity": .75 });
+  opt.ticks.forEach(function (tv) {
+    add("line", { x1: x0, x2: x1, y1: sy(tv), y2: sy(tv), stroke: "#e2e7ee" });
+    const tf = opt.ticks.length > 12 ? Math.max(12, opt.tickFont - 5) : opt.tickFont;
+    add("text", { x: x0 - 12, y: sy(tv) + 5, "text-anchor": "end", "font-size": tf,
+                  "font-weight": 700, fill: "#55626f" }, tv.toFixed(2));
+  });
+  const mins = SHOW.window * SIM.DT / 60;
+  const NX = (CLEAN && opt.color === "#7a3ea8") ? 5 : VLM ? Math.max(1, Math.round(mins)) : 5;
+  for (let i = 0; i <= NX; i++) {
+    const xx = x0 + (x1 - x0) * i / NX, m = Math.round(mins * (1 - i / NX) * 100) / 100;
+    add("line", { x1: xx, x2: xx, y1: y1, y2: y1 + 5, stroke: "#9aa6b4" });
+    add("text", { x: xx, y: y1 + opt.xLabelDy, "text-anchor": "middle", "font-size": opt.tickFont - 2,
+                  "font-weight": 600, fill: "#6b7684" },
+        i === NX ? "현재" : "−" + (m >= 1 ? m.toFixed(0) + "분" : (m * 60).toFixed(0) + "초"));
+  }
+  add("text", { x: x0, y: y0 - 10, "font-size": opt.titleFont, "font-weight": 800, fill: "#26313d" }, opt.title);
+
+  // 조치 시점 세로 점선 (GPC 그래프에만)
+  if (opt.markers) opt.markers.forEach(function (mk) {
+    const xx = x0 + (x1 - x0) * mk.frac;
+    add("line", { x1: xx, x2: xx, y1: y0, y2: y1, stroke: "#b26a00", "stroke-width": 2, "stroke-dasharray": "6 5" });
+    add("text", { x: xx + 5, y: y0 + 16, "font-size": 15, "font-weight": 800, fill: "#8a4b00" }, mk.mark);
+  });
+
+  if (pts.length && SMOOTH > 1) {
+    // 이동평균 평활 (양쪽 대칭 창). 잔물결을 죽이되 수십 초 주기 진동은 남긴다.
+    const h = Math.floor(SMOOTH / 2), vs = pts.map(function (p) { return p.v; });
+    pts = pts.map(function (p, i) {
+      const a = Math.max(0, i - h), b = Math.min(vs.length, i + h + 1);
+      let sum = 0; for (let j = a; j < b; j++) sum += vs[j];
+      return Object.assign({}, p, { v: sum / (b - a) });
+    });
+  }
+  if (pts.length) {
+    let up = "", dn = "";
+    pts.forEach(function (p, i) { up += (i ? "L" : "M") + sx(i).toFixed(1) + " " + sy(p.hi).toFixed(1); });
+    for (let i = pts.length - 1; i >= 0; i--) dn += "L" + sx(i).toFixed(1) + " " + sy(pts[i].lo).toFixed(1);
+    if (opt.plain && ENVFAINT) {
+      add("path", { d: up + dn + "Z", fill: opt.color, "fill-opacity": .10, stroke: "none" });   // 옅은 채움만
+    } else if (opt.plain || (VLM && P.get("env") === "0")) {
+      // 엔벨로프 없음 (plain / 보조선 도구 실험용)
+    } else if (VLM) {
+      add("path", { d: up + dn + "Z", fill: opt.color, "fill-opacity": .08, stroke: "none" });
+      let hiD = "", loD = "";
+      pts.forEach(function (p, i) {
+        hiD += (i ? "L" : "M") + sx(i).toFixed(1) + " " + sy(p.hi).toFixed(1);
+        loD += (i ? "L" : "M") + sx(i).toFixed(1) + " " + sy(p.lo).toFixed(1);
+      });
+      add("path", { d: hiD, fill: "none", stroke: opt.color, "stroke-width": 1.2, "stroke-opacity": .8 });
+      add("path", { d: loD, fill: "none", stroke: opt.color, "stroke-width": 1.2, "stroke-opacity": .8 });
+    } else {
+      add("path", { d: up + dn + "Z", fill: opt.color, "fill-opacity": ENV_OP, stroke: "none" });
+    }
+    let d = "";
+    pts.forEach(function (p, i) { d += (i ? "L" : "M") + sx(i).toFixed(1) + " " + sy(p.v).toFixed(1); });
+    add("path", { d: d, fill: "none", stroke: opt.color, "stroke-width": LINE_W, "data-role": "mean",
+                  "stroke-linejoin": "round", "stroke-linecap": "round" });
+    const last = pts[pts.length - 1];
+    if (MARKS && opt.markers) {   // GPC 그래프에만: 평균선의 max·min 에 마커 + 값
+      let iMax = 0, iMin = 0;
+      pts.forEach(function (p, i) { if (p.v > pts[iMax].v) iMax = i; if (p.v < pts[iMin].v) iMin = i; });
+      [[iMax, "max", -14], [iMin, "min", 22]].forEach(function (m) {
+        const i = m[0], px = sx(i), py = sy(pts[i].v);
+        add("circle", { cx: px, cy: py, r: 6, fill: "#fff", stroke: "#111", "stroke-width": 2.5 });
+        // 오른쪽 끝 근처면 현재값 라벨과 겹치므로 왼쪽으로 뺀다
+        const nearEnd = px > x1 - 140;
+        add("text", { x: nearEnd ? px - 12 : Math.max(x0 + 60, px), y: py + m[2], "text-anchor": nearEnd ? "end" : "middle",
+                      "font-size": 16, "font-weight": 800, fill: "#111" }, m[1] + " " + pts[i].v.toFixed(3));
+      });
+    }
+    if (!opt.plain) add("circle", { cx: sx(pts.length - 1), cy: sy(last.v), r: 5, fill: opt.color, stroke: "#fff", "stroke-width": 2 });
+    // 현재값을 숫자로 병기(P1) — VLM 은 그래프에서 정확한 값을 못 읽는다
+    if (!opt.plain) add("text", { x: x1 - 8, y: Math.min(y1 - 8, Math.max(y0 + 20, sy(last.v) - 14)), "text-anchor": "end",
+                  "font-size": opt.titleFont + 2, "font-weight": 800, fill: opt.color }, last.v.toFixed(opt.dp));
+  }
+  svg.replaceChildren.apply(svg, N);
+}
+
+function drawSpark(r, pts, effPts, off) {
+  const cfg = r.cfg, spec = r.spec;
+  const x0 = SP_PAD.l, x1 = cfg.w - SP_PAD.r, y0 = SP_PAD.t, y1 = cfg.h - SP_PAD.b;
+  const win = SIM.WINDOW[r.key], span = win[1] - win[0];
+  const amin = Math.max(spec.min, win[0] - span * 0.7), amax = Math.min(spec.max, win[1] + span * 0.7);
+  const sy = function (v) { const c = Math.min(amax, Math.max(amin, v)); return y1 - (y1 - y0) * (c - amin) / (amax - amin); };
+  const sx = timeAxis(pts, x0, x1);
+  const N = [];
+  const add = function (t, a, txt) {
+    const e = document.createElementNS(NS, t);
+    for (const k in a) e.setAttribute(k, a[k]);
+    if (txt !== undefined) e.textContent = txt;
+    N.push(e); return e;
+  };
+  add("rect", { x: x0, y: y0, width: x1 - x0, height: y1 - y0, fill: "#fbfcfd", stroke: "#d4dbe3" });
+  // 정상 범위(공정 창): 초록 띠 + 하한·상한 실선
+  const wy0 = sy(win[0]), wy1 = sy(win[1]);
+  add("rect", { x: x0, y: wy1, width: x1 - x0, height: wy0 - wy1, fill: "#1baf7a", "fill-opacity": .14 });
+  add("line", { x1: x0, x2: x1, y1: wy0, y2: wy0, stroke: "#b42318", "stroke-width": 1.5 });
+  add("line", { x1: x0, x2: x1, y1: wy1, y2: wy1, stroke: "#b42318", "stroke-width": 1.5 });
+  add("text", { x: x1 - 4, y: wy1 - 3, "text-anchor": "end", "font-size": 12, "font-weight": 800, fill: "#9c1c15" }, "상한");
+  add("text", { x: x1 - 4, y: wy0 + 12, "text-anchor": "end", "font-size": 12, "font-weight": 800, fill: "#9c1c15" }, "하한");
+  // 기준값 점선
+  add("line", { x1: x0, x2: x1, y1: sy(spec.base), y2: sy(spec.base), stroke: "#0c6b2e", "stroke-width": 1.5, "stroke-dasharray": "6 5", "stroke-opacity": .7 });
+  [win[0], spec.base, win[1]].forEach(function (tv, i) {
+    add("text", { x: x0 - 6, y: sy(tv) + (i === 0 ? 10 : i === 2 ? 2 : 5), "text-anchor": "end", "font-size": 13, "font-weight": 700,
+                  fill: i === 1 ? "#55626f" : "#9c1c15" }, tv.toFixed(spec.dp));
+  });
+  add("text", { x: x0, y: y1 + 18, "font-size": 13, "font-weight": 600, fill: "#6b7684" }, "−" + winLabel());
+  add("text", { x: x1, y: y1 + 18, "text-anchor": "end", "font-size": 13, "font-weight": 600, fill: "#6b7684" }, "현재");
+
+  if (pts.length) {
+    // 계단: 다음 점까지 수평으로 간 뒤 수직으로 꺾는다
+    let d = "M" + sx(0).toFixed(1) + " " + sy(pts[0].v).toFixed(1);
+    for (let i = 1; i < pts.length; i++) {
+      d += "H" + sx(i).toFixed(1) + "V" + sy(pts[i].v).toFixed(1);
+    }
+    add("path", { d: d, fill: "none", stroke: "#8a96a3", "stroke-width": 1.8, "stroke-dasharray": "5 4", "stroke-linejoin": "miter" });   // 설정값
+  }
+  if (effPts && effPts.length) {            // 실제 공정값 — 파란 실선, 기준에서 벗어나면 빨강
+    const ex = timeAxis(effPts, x0, x1), cl = function (v) { return Math.min(spec.max, Math.max(spec.min, v)); };
+    const col = off || "#1552b8";
+    add("path", { d: effPts.map(function (p, i) { return (i ? "L" : "M") + ex(i).toFixed(1) + " " + sy(cl(p.v)).toFixed(1); }).join(""),
+                  fill: "none", stroke: col, "stroke-width": 2.5 });
+    const lv = effPts[effPts.length - 1].v;
+    add("circle", { cx: ex(effPts.length - 1), cy: sy(cl(lv)), r: 4, fill: col, stroke: "#fff", "stroke-width": 2 });
+  }
+  r.svg.replaceChildren.apply(r.svg, N);
+}
+
+/* ------------------------------------------------------------------ 시뮬레이터 */
+buildStage();
+let sim = new SIM.Sim({ seed: 1234, faultType: "normal", injectTick: 1300 });
+let paused = false, speed = 4, showGT = true;
+
+function clickAt(x, y) {
+  const id = sim.hitTest(x, y);            // 좌표 → action_id. 드라이버와 완전히 같은 경로.
+  if (!id) return null;
+  sim.apply(id);
+  const e = refs["btn_" + id];
+  if (e) { e.classList.add("flash"); setTimeout(function () { e.classList.remove("flash"); }, 130); }
+  render();
+  return id;
+}
+window.aldClick = clickAt;
+window.aldSim = function () { return sim; };
+
+/* ------------------------------------------------------------------ 렌더 */
+function stateOf(v, band) {
+  if (v < band[0]) return ["bad", "하한 미달"];
+  if (v > band[1]) return ["bad", "상한 초과"];
+  return ["ok", "대역 내"];
+}
+const PAD_G = { l: 96, r: 22, t: 32, b: 28 };
+const PAD_U = { l: 96, r: 22, t: 26, b: 24 };
+
+function render() {
+  const view = sim.view(SHOW.window, POINTS);
+  if (PLAIN) {
+    drawChart(svgG, PLAIN_CFG, view.gpcPoints, {
+      title: "GPC (Å/cycle) · 최근 " + winLabel(), color: "#1552b8", dp: 3, plain: true,
+      band: SIM.GPC_BAND, target: SIM.GPC_BASE, ticks: GPC_TICKS,
+      pad: PAD_G, tickFont: 18, titleFont: 19, xLabelDy: 22
+    });
+    if (showGT) gtbox.textContent = JSON.stringify(sim.gt());
+    return;
+  }
+  refs.clock.textContent = view.clock;
+
+  const gs = stateOf(view.gpc, SIM.GPC_BAND);
+  refs.gpc.v.textContent = view.gpc.toFixed(3);
+  refs.gpc.chip.className = "chip " + gs[0]; refs.gpc.chip.textContent = gs[1];
+  refs.gpc.sub.textContent = "목표 대비 " + (view.gpc >= SIM.GPC_BASE ? "+" : "") + (view.gpc - SIM.GPC_BASE).toFixed(3);
+
+  const us = stateOf(view.uniformity, SIM.U_BAND);
+  refs.uniformity.v.textContent = view.uniformity.toFixed(2);
+  refs.uniformity.chip.className = "chip " + us[0]; refs.uniformity.chip.textContent = us[1];
+  refs.uniformity.sub.textContent = "목표 대비 " + (view.uniformity >= SIM.U_BASE ? "+" : "") + (view.uniformity - SIM.U_BASE).toFixed(2);
+
+  const GC = CLEAN ? COORDS.charts_clean.gpc : GPC_CFG;
+  drawChart(svgG, GC, view.gpcPoints, {
+    title: "GPC 추세 · 최근 " + winLabel() + " (Å/cycle)", color: "#1552b8", dp: 3, plain: CLEAN,
+    band: SIM.GPC_BAND, target: SIM.GPC_BASE, ticks: GPC_TICKS,
+    pad: PAD_G, tickFont: 18, titleFont: 19, xLabelDy: 22, markers: view.markers
+  });
+  drawChart(svgU, CLEAN ? COORDS.charts_clean.uniformity : COORDS.charts.uniformity, view.uPoints, {
+    title: "균일도 추세 (%, 낮을수록 좋음)", color: "#7a3ea8", dp: 2, plain: CLEAN,
+    band: SIM.U_BAND, target: SIM.U_BASE, ticks: CLEAN ? [0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8] : [0.5, 0.9, 1.3],
+    pad: CLEAN ? PAD_G : PAD_U, tickFont: CLEAN ? 18 : 16, titleFont: CLEAN ? 19 : 17, xLabelDy: CLEAN ? 22 : 20
+  });
+
+  if (SHOW.knobs) SIM.KNOB_ORDER.forEach(function (k) {
+    const r = refs["sp_" + k]; r.key = k;
+    const ef = view.eff[k], set = view.knobs[k], w = SIM.WINDOW[k], amp = k === "press" ? view.oscAmp : 0;
+    // 상태: 창 밖 = 빨강, 창 끝 15% 안쪽으로 다가감 = 주황, 그 밖 = 보통
+    const vlo = k === "press" ? set - amp : ef, vhi = k === "press" ? set + amp : ef, edge = (w[1] - w[0]) * 0.15;
+    const out = vlo < w[0] - 1e-9 || vhi > w[1] + 1e-9, near = !out && (vlo < w[0] + edge || vhi > w[1] - edge);
+    const off = out || near, col = out ? "#d92d20" : "#c27c0e";
+    r.v.firstChild.nodeValue = (k === "press" && view.oscAmp > 0.02 ? "±" + view.oscAmp.toFixed(2) + " " : "") + (k === "press" ? set : ef).toFixed(r.spec.dp);
+    r.v.style.color = off ? col : "";
+    r.lab.textContent = r.spec.label + " 실제 · 설정 " + set.toFixed(r.spec.dp);
+    r.lab.style.color = off ? col : "";
+    drawSpark(r, view.knobPoints[k], view.effPoints[k], off ? col : null);
+  });
+
+  if (SHOW.history) for (let i = 0; i < LOG_ROWS; i++) {
+    const row = refs["log" + i], it = view.log[i];
+    if (!it) { row.innerHTML = i === 0 ? '<span class="log-empty">조치 없음</span>' : ""; continue; }
+    let tail;
+    if (it.status === "대기" && view.pending && i === 0) tail = '<span class="log-w">대기 ' + Math.ceil(view.pending.remainingS) + " s</span>";
+    else if (it.status === "한계") tail = '<span class="log-w">조정 한계</span>';
+    else tail = '<span class="log-d">' + it.status + (it.outcome ? " · " + it.outcome : "") + "</span>";
+    row.innerHTML = '<span class="log-t">' + it.time + "</span>  " + it.text + " · " + tail;
+  }
+
+  if (showGT) {
+    const g = sim.gt();
+    gtbox.textContent =
+      "t=" + g.t + "  clock=" + view.clock + "  fault=" + g.fault_type + "  inject=" + g.inject_tick +
+      "  주입 후 " + ((g.t - g.inject_tick) * SIM.DT).toFixed(0) + "초\n" +
+      "gpc_true=" + g.gpc_true.toFixed(3) + "  gpc_display=" + g.gpc_display.toFixed(3) +
+      "  uniformity_true=" + g.uniformity_true.toFixed(3) + "  uniformity=" + g.uniformity.toFixed(3) + "\n" +
+      "교란=" + g.disturbance + "  진동진폭=" + g.osc_amp + "  실효 피처=" + JSON.stringify(g.effective) + "\n" +
+      "GPC 항=" + JSON.stringify(g.terms_gpc) + "\n균일도 항=" + JSON.stringify(g.terms_u) + "\n" +
+      "correct_action=" + g.correct_action + "   pending=" +
+      (g.pending_action ? g.pending_action.id + "(" + g.pending_action.remaining_s + "s)" : "none") + "\n" +
+      "rationale=" + g.rationale;
+  }
+}
+
+/* ------------------------------------------------------------------ 루프 (실시간 1 tick = 0.5 s) */
+setInterval(function () {
+  if (paused) return;
+  for (let i = 0; i < speed; i++) sim.tick();
+  render();
+}, SIM.DT * 1000);
+
+/* ------------------------------------------------------------------ 개발 패널 */
+const gtbox = document.getElementById("gtbox");
+const dFault = document.getElementById("d-fault");
+SIM.FAULT_TYPES.forEach(function (f) {
+  const o = el("option", null, {}, f + " — " + SIM.MECHANISM[f].split(" — ")[0]);
+  o.value = f; dFault.appendChild(o);
+});
+// URL 파라미터로 초기 상태 지정(스크린샷·회귀 확인용)
+//   ?fault=ramp&seed=7&inject=1300&adv=400&clicks=temp_up,temp_up&gap=90&paused=1
+if (P.get("fault")) dFault.value = P.get("fault");
+if (P.get("seed")) document.getElementById("d-seed").value = P.get("seed");
+if (P.get("inject")) document.getElementById("d-inject").value = P.get("inject");
+const ADV = parseInt(P.get("adv") || "0", 10);
+const CLICKS = (P.get("clicks") || "").split(",").filter(Boolean);
+const GAP = parseInt(P.get("gap") || "80", 10);
+if (P.get("paused")) paused = true;
+
+function restart() {
+  const inject = parseInt(document.getElementById("d-inject").value, 10) || SIM.PREROLL_TICKS;
+  sim = new SIM.Sim({ seed: parseInt(document.getElementById("d-seed").value, 10) || 0,
+                      faultType: dFault.value, injectTick: inject });
+  // 창을 가득 채운 뒤 주입 직전까지 미리 돌린다. 그래야 형태가 제대로 보인다.
+  const warm = Math.max(0, inject - 120 + ADV);     // adv 음수면 주입 전 프레임
+  for (let i = 0; i < warm; i++) sim.tick();
+  CLICKS.forEach(function (id) {
+    const b = COORDS.buttons[id];
+    if (b) clickAt(b.x, b.y);              // 좌표를 거쳐서 누른다. 드라이버와 같은 경로.
+    for (let i = 0; i < GAP; i++) sim.tick();
+  });
+  render();
+}
+const dUI = document.getElementById("d-ui");
+dUI.value = UI;
+dUI.onchange = function () {                       // 새로고침 없이 그 자리에서 다시 만든다
+  try { localStorage.setItem("ald_ui", this.value); } catch (e) {}
+  setMode(this.value); buildStage(); render();
+};
+document.getElementById("d-restart").onclick = restart;
+document.getElementById("d-pause").onclick = function () { paused = !paused; this.textContent = paused ? "재개" : "일시정지"; };
+document.getElementById("d-gt").onclick = function () {
+  showGT = !showGT; this.textContent = showGT ? "GT 숨기기" : "GT 보기"; gtbox.style.display = showGT ? "" : "none";
+};
+document.getElementById("d-speed").onchange = function () { speed = parseInt(this.value, 10); };
+dFault.onchange = restart;
+restart();
+</script>
+<script>
+/* 이상 감지 함수 + 폐루프 에이전트 (시뮬레이터 v2). reader/detect_v2.py 와 같은 규칙 — parity 시험으로 확인한다.
+ *
+ * detect(g, u, dt): 화면 그래프 선(최근 10분, dt 초 간격)만 보고 원인 피처와 조치를 낸다.
+ * Agent:            매 초 detect → 조치가 있으면 버튼을 누르고 30초 기다린다(결과 확인).
+ *                   노브가 이미 끝까지 가 있으면 더 누르지 않고 클리닝을 요청한다.
+ */
+(function (root) {
+"use strict";
+const TH = { osc: 0.006, acf: 0.3, mag: 0.05 };
+const TARGET = { gpc: 1.100, u: 0.900 };   // 화면 카드의 '목표'
+const U_SCALE = 3.0, SIG_DEG = { temp: 6.3, purge: 51.3, flow: 98.3, pulse: 166.0 };
+const KO = { temp: "온도", purge: "퍼지", flow: "유량", pulse: "펄스", press: "압력", normal: "정상" };
+const REVERSE = { temp_up: "temp_down", temp_down: "temp_up", press_up: "press_down", press_down: "press_up", pulse_up: "pulse_down",
+                  pulse_down: "pulse_up", purge_up: "purge_down", purge_down: "purge_up", flow_up: "flow_down", flow_down: "flow_up" };
+const ACTION = { normal: "noop", temp: "temp_up", purge: "purge_up", pulse: "pulse_up", press: "press_down", flow: "flow_up" };
+const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+
+function detect(g, u, dt, ignore) {   // ignore: 내가 누른 시각들(지금 기준 초, 음수) — 진동 판정에서 ±10초를 뺀다
+  const n = g.length, tAt = i => (i - (n - 1)) * dt;           // 지금 = 0초
+  const seg = (a, lo, hi) => a.filter((_, i) => tAt(i) > lo && tAt(i) <= hi);
+  const ng = seg(g, -20, 0), nu = seg(u, -20, 0);
+  if (ng.length < 2) return { cause: "normal", action: "noop", why: "그래프가 비었다", feat: {} };
+  const dg = mean(ng) - TARGET.gpc, du = mean(nu) - TARGET.u;      // 화면 카드에 적힌 목표값과 비교 (창 앞쪽은 이상 기간이 섞일 수 있다)
+  const w = g.map((v, i) => [tAt(i), v]).filter(p => p[0] > -90), m = w.length;
+  let sd = 0, best = 0, per = null;
+  if (m >= 12) {
+    const step = (w[m - 1][0] - w[0][0]) / (m - 1), h = Math.max(1, Math.round(10 / step));
+    const r = w.map((p, i) => { const sl = w.slice(Math.max(0, i - h), Math.min(m, i + h + 1)); return p[1] - mean(sl.map(q => q[1])); });
+    if (ignore) r.forEach((x, i) => { if (ignore.some(t => Math.abs(w[i][0] - t) <= 10)) r[i] = 0; });
+    const s0 = r.reduce((x, y) => x + y * y, 0) || 1e-12;
+    sd = Math.sqrt(s0 / m);
+    for (let lag = Math.max(1, Math.round(25 / step)); lag <= Math.min(m - 2, Math.round(60 / step)); lag++) {
+      let c = 0; for (let i = 0; i + lag < m; i++) c += r[i] * r[i + lag]; c /= s0;
+      if (c > best) { best = c; per = lag * step; }
+    }
+  }
+  const mag = Math.hypot(dg, du / U_SCALE), ang = Math.atan2(du / U_SCALE, dg) * 180 / Math.PI;
+  const feat = { dgpc: dg, du: du, osc_sd: sd, osc_acf: best, period_s: per, mag: mag, angle: ang };
+  const out = (c, why) => ({ cause: c, action: ACTION[c], why: why, feat: feat });
+  const sg = v => (v >= 0 ? "+" : "") + v.toFixed(3);
+  if (sd > TH.osc && best > TH.acf) return out("press", "GPC 가 " + Math.round(per) + "초 주기로 흔들림 (폭 " + sd.toFixed(3) + ")");
+  if (mag < TH.mag) return out("normal", "GPC " + sg(dg) + ", 균일도 " + sg(du) + " — 변화가 작다");
+  let c = null, cd = 1e9;
+  for (const k in SIG_DEG) { const dd = Math.abs(((ang - SIG_DEG[k] + 540) % 360) - 180); if (dd < cd) { cd = dd; c = k; } }
+  return out(c, "GPC " + sg(dg) + ", 균일도 " + sg(du) + " → 방향 " + Math.round(ang) + "° 가 " + KO[c] + " 지문(" + Math.round(SIG_DEG[c]) + "°)에 가장 가깝다");
+}
+
+/** 폐루프 에이전트. step(sim, 초, press) 를 시뮬레이터 1초마다 부른다. press(id) 가 버튼을 누른다(화면 경로).
+ *  - 같은 판정이 15초 이어져야 누른다 (진동처럼 판정이 출렁이는 동안은 기다린다)
+ *  - 누른 뒤 효과가 그래프에 드러날 때까지 기다린다 (압력 90초 = 진동 판정 창, 나머지 30초)
+ *  - 기다림이 끝나면 '누른 직후 그래프가 이상 방향의 반대로 움직였나' 를 본다 (압력은 흔들림이 줄었나).
+ *    같은 버튼이 두 번 연속 듣지 않으면 그동안 누른 것을 전부 되돌리고 5분 동안 그 버튼을 쓰지 않는다. */
+const WAIT_S = { press_down: 90 }, HOLD_S = 15;
+function unit(deg) { const r = deg * Math.PI / 180; return [Math.cos(r), Math.sin(r)]; }
+function Agent(opts) { this.undo = !(opts && opts.undo === false); this.waitUntil = -Infinity; this.banned = {}; this.presses = [];
+  this.streak = null; this.pending = null; this.last = null; this.lastAct = null; this.hist = []; this.log = []; }
+Agent.prototype.step = function (sim, nowS, press) {
+  const mine = this.presses.filter(p => nowS - p.t < 90).map(p => p.t - nowS);
+  const v = sim.view(), d = detect(v.gpcPoints.map(p => p.v), v.uPoints.map(p => p.v), 5, mine);
+  const note = (act, why) => (this.last = { d: d, act: act, why: why });
+  const doPress = (act, cause) => { press(act); this.presses.push({ t: nowS, act: act, cause: cause }); this.lastAct = act; };
+  if (nowS < this.waitUntil) return note("noop", "대기 " + Math.ceil(this.waitUntil - nowS) + "초 (" + this.lastAct + " 효과 확인 중)");
+  if (this.pending) {                                         // 직전 조치의 효과 판정
+    const p = this.pending; this.pending = null;
+    let good, how;
+    if (p.cause === "press") { const g = p.osc - d.feat.osc_sd; good = g > 0.002; how = "흔들림 " + p.osc.toFixed(3) + "→" + d.feat.osc_sd.toFixed(3); }
+    else { const n = unit(SIG_DEG[p.cause]), dx = d.feat.dgpc - p.x, dy = d.feat.du / U_SCALE - p.y;
+           const proj = -(dx * n[0] + dy * n[1]); good = proj > 0.005; how = KO[p.cause] + " 반대 방향으로 " + proj.toFixed(3); }
+    const sk = this.streak;
+    if (sk && sk.act === p.act) sk.bad = good ? 0 : sk.bad + 1;
+    this.log.push({ t: nowS, act: p.act, good: good, how: how });
+    if (this.undo && sk && sk.bad >= 2) {
+      for (let i = 0; i < sk.n; i++) doPress(REVERSE[sk.act], "되돌림");
+      this.banned[sk.act] = nowS + 300; this.streak = null; this.waitUntil = nowS + 30; this.hist = [];
+      return note(REVERSE[sk.act], sk.act + " 가 두 번 연속 듣지 않았다 (" + how + ") → " + sk.n + "번 되돌리고 5분 금지");
+    }
+  }
+  let act = d.action, why = d.why;
+  this.hist.push([nowS, d.cause]); this.hist = this.hist.filter(h => nowS - h[0] < HOLD_S);
+  if (act === "noop") { if (d.cause === "normal") this.streak = null; return note("noop", why); }
+  if (!(this.hist.length >= HOLD_S && this.hist.every(h => h[1] === d.cause))) return note("noop", why + " — 판정이 " + HOLD_S + "초 이어지면 누른다");
+  if (this.banned[act] > nowS) return note("noop", why + " — 그런데 " + act + " 는 방금 듣지 않아 보류");
+  const b = COORDS.buttons[act], k = b && b.knob ? SIM.KNOBS[b.knob] : null;
+  if (k && (b.dir > 0 ? sim.knobs[b.knob] >= k.max - 1e-9 : sim.knobs[b.knob] <= k.min + 1e-9)) {
+    act = "request_clean"; why = k.label + " 노브가 끝(" + sim.knobs[b.knob] + ")인데 " + d.why + " → 클리닝 요청";
+  }
+  if (REVERSE[act]) {
+    this.streak = this.streak && this.streak.act === act ? Object.assign(this.streak, { n: this.streak.n + 1 }) : { act: act, n: 1, bad: 0 };
+    this.pending = { act: act, cause: d.cause, x: d.feat.dgpc, y: d.feat.du / U_SCALE, osc: d.feat.osc_sd };
+  }
+  doPress(act, d.cause); this.hist = [];
+  this.waitUntil = nowS + (WAIT_S[act] || 30);
+  return note(act, why);
+};
+
+root.AGENT = { detect: detect, Agent: Agent, TH: TH, ACTION: ACTION, SIG_DEG: SIG_DEG };
+if (typeof module !== "undefined") module.exports = root.AGENT;
+})(typeof window !== "undefined" ? window : globalThis);
+
+</script>
+
+<style>
+  #fit { overflow: hidden; }
+  #stage { transform-origin: 0 0; }
+  #det { margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  #det .box { background: #333d4b; color: #e6eef6; border-radius: 6px; padding: 10px 12px; font: 14px/1.5 "Noto Sans KR", system-ui, sans-serif; }
+  #det .k { color: #9fb2c6; font-size: 12px; }
+  #det .v { font-size: 20px; font-weight: 700; }
+  #inj { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: #26303c; border-radius: 6px; padding: 10px 12px; }
+  #inj .now { font-size: 20px; font-weight: 800; margin-right: 12px; }
+  #inj .now.on { color: #ffb86b; } #inj .now.off { color: #6ee7a0; }
+  #det .dok { color: #6ee7a0; } #det .dbad { color: #ff9b9b; }
+  #dev { width: auto !important; max-width: 100%; box-sizing: border-box; }
+  #gtbox { overflow-x: auto; }
+</style>
+<script>
+/* 화면을 창 너비에 맞춘다 (1920×1080 캔버스는 그대로, 보기만 축소) */
+(function () {
+  const st = document.getElementById("stage"), fit = document.createElement("div");
+  fit.id = "fit"; st.parentNode.insertBefore(fit, st); fit.appendChild(st);
+  function size() { const k = Math.min(1, document.documentElement.clientWidth / 1920);
+    st.style.transform = "scale(" + k + ")"; fit.style.width = 1920 * k + "px"; fit.style.height = 1080 * k + "px"; }
+  addEventListener("resize", size); size();
+})();
+
+/* 감지 함수는 sim/agent_v2.js (reader/detect_v2.py 와 parity 시험 통과). 입력은 화면 그래프에 그려진 선(5초 간격)뿐 */
+const ACT = AGENT.ACTION;
+const KO = { normal: "정상", temp: "온도", purge: "퍼지", pulse: "펄스", press: "압력", flow: "유량",
+  noop: "대기", temp_up: "온도 +", temp_down: "온도 −", purge_up: "퍼지 +", purge_down: "퍼지 −", pulse_up: "펄스 +",
+  pulse_down: "펄스 −", press_up: "압력 +", press_down: "압력 −", flow_up: "유량 +", flow_down: "유량 −", request_clean: "클리닝 요청" };
+const detectJS = (g, u, dt) => AGENT.detect(g, u, dt);   // sim/agent_v2.js 의 감지 함수 그대로
+(function () {
+  /* 이상 주입 패널: 지금 그래프·노브를 그대로 둔 채, 고른 피처에 교란을 넣는다 */
+  const inj = document.createElement("div"); inj.id = "inj";
+  inj.innerHTML = '<span class="now" id="inj-now"></span><label>이상</label><select id="inj-f">' +
+    SIM.FAULT_TYPES.filter(f => f !== "normal").map(f => '<option value="' + f + '">' + SIM.MECHANISM[f] + '</option>').join("") +
+    '</select><button id="inj-go">지금 주입</button><button id="inj-off">정상으로</button>';
+  const dev = document.getElementById("dev"); dev.insertBefore(inj, dev.children[1]);
+  document.getElementById("inj-go").onclick = function () { sim.faultType = document.getElementById("inj-f").value; sim.injectTick = sim.t; sim.state(); render(); };
+  document.getElementById("inj-off").onclick = function () { sim.faultType = "normal"; sim.state(); render(); };
+  setInterval(function () {
+    const n = document.getElementById("inj-now"), on = sim.faultType !== "normal";
+    n.className = "now " + (on ? "on" : "off");
+    n.textContent = on ? "지금 이상: " + KO[sim.faultType] + " (주입 후 +" + Math.max(0, (sim.t - sim.injectTick) * SIM.DT).toFixed(0) + "초)" : "지금 이상: 없음 (정상)";
+  }, 300);
+})();
+(function () {
+  const box = document.createElement("div"); box.id = "det";
+  document.getElementById("dev").insertBefore(box, document.getElementById("gtbox"));
+  setInterval(function () {
+    const v = sim.view(), g = sim.gt(), d = detectJS(v.gpcPoints.map(p => p.v), v.uPoints.map(p => p.v), 5);
+    const act = ACT[d.cause], ok = act === g.correct_action, since = (g.t - g.inject_tick) * SIM.DT;
+    box.innerHTML =
+      '<div class="box"><div class="k">감지 함수 — 화면 그래프만 보고</div><div class="v">원인 ' + KO[d.cause] + ' → ' + KO[act] + '</div><div>' + d.why + '</div></div>' +
+      '<div class="box"><div class="k">시뮬레이터 정답 (' + (since < 0 ? "주입 " + (-since).toFixed(0) + "초 전" : "주입 후 +" + since.toFixed(0) + "초") + ')</div>' +
+      '<div class="v">교란 ' + KO[g.fault_type] + ' → ' + KO[g.correct_action] + '</div><div class="' + (ok ? "dok" : "dbad") + '">' +
+      (ok ? "감지 함수와 일치" : (g.correct_action === "noop" ? "아직 화면에 보일 만큼 크지 않음 (정답 대기)" : "감지 함수와 다름")) + '</div></div>';
+  }, 500);
+})();
+</script>
+
+</body>
+</html>

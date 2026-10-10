@@ -1,0 +1,68 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VLM 폐루프 보드</title>
+<style>
+:root{--bg:#0f1418;--panel:#172026;--ink:#e5ecf0;--ink2:#b3c1ca;--mut:#8696a0;--line:#2a363e;--ok:#4ade80;--bad:#f87171;--warn:#facc15;--vlm:#fb923c;--truth:#60a5fa;--uni:#a78bfa}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 "Noto Sans KR",system-ui,sans-serif}
+.w{padding:12px;display:grid;gap:12px}h1{font-size:17px;margin:0}.mut{color:var(--mut)}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.p{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px;min-width:0}
+.tbl{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:12.5px}th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{color:var(--mut);font-weight:500}
+td.n{font-family:ui-monospace,monospace}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,460px),1fr));gap:12px}
+.grid.one{grid-template-columns:minmax(0,1fr)}.grid.two{grid-template-columns:repeat(auto-fit,minmax(min(100%,700px),1fr))}
+.vid{cursor:zoom-in}.vid:fullscreen{cursor:zoom-out;border:0}.vid:fullscreen img{object-fit:contain}
+.vid{position:relative;aspect-ratio:16/9;background:#000;border:1px solid var(--line)}.vid img{width:100%;height:100%;display:block}
+.vid .ph{position:absolute;inset:0;display:grid;place-items:center;color:var(--mut)}.vid [hidden]{display:none!important}
+.hd{display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:6px}.hd b{font-size:15px}
+.cl{margin-top:8px}.cl img{width:100%;display:block;border:1px solid var(--line);border-radius:4px}.cl .cap{font-size:12px;margin-top:4px}.cl .list{font:12px/1.7 ui-monospace,monospace;margin-top:4px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;margin-top:8px}.kv dt{color:var(--mut)}.kv dd{margin:0;font-family:ui-monospace,monospace;overflow-wrap:anywhere}
+.pill{display:inline-block;padding:0 8px;border-radius:999px;border:1px solid currentColor;font-size:11.5px;font-weight:600}
+svg{width:100%;max-width:720px;height:auto;display:block;margin-top:6px}svg text{fill:var(--mut);font:10px ui-monospace,monospace}
+</style>
+<div class="w">
+ <div><h1 id="h1">VLM 폐루프 — 화면 판독(VLM) → 감지 함수 → 버튼 grounding(VLM) → 클릭</h1>
+  <div class="mut" id="meta">각 칸은 시뮬레이터 하나. VLM 이 두 그래프의 '현재' 값을 매 초 읽어 쌓고, 감지 함수가 원인을 정하면, 그 버튼의 위치를 VLM 이 화면에서 찾아 실제로 누른다.</div></div>
+ <div class="p"><div class="tbl"><table id="sum"></table></div></div>
+ <div class="grid" id="g"></div>
+</div>
+<script>
+const KO={normal:"정상",temp:"온도",purge:"퍼지",pulse:"펄스",press:"압력",flow:"유량",noop:"대기",temp_up:"온도 +",temp_down:"온도 −",purge_up:"퍼지 +",purge_down:"퍼지 −",pulse_up:"펄스 +",pulse_down:"펄스 −",press_up:"압력 +",press_down:"압력 −",flow_up:"유량 +",flow_down:"유량 −",request_clean:"클리닝 요청"};
+const FIX={temp:"temp_up",purge:"purge_up",pulse:"pulse_up",press:"press_down",flow:"flow_up"};
+const ko=a=>a?(KO[a]||a):"허공",esc=s=>String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])),f=(v,n=3)=>v==null?"–":(+v).toFixed(n);
+const T=s=>s==null?"–":(s<0?"−":"+")+Math.abs(s).toFixed(0)+"초";
+let built=false;
+function build(F){const gg=document.getElementById("g");gg.className="grid"+(F.length===1?" one":F.length===2?" two":"");gg.innerHTML=F.map(x=>`<div class="p"><div class="hd"><b>${KO[x]}${x!=="normal"?" 교란":""}</b><span id="s_${x}" class="pill mut">대기</span></div>
+ <div class="vid" title="누르면 전체 화면" onclick="this.requestFullscreen?(document.fullscreenElement?document.exitFullscreen():this.requestFullscreen()).catch(()=>{}):0"><img id="v_${x}" alt="${KO[x]} 화면" hidden><div class="ph" id="ph_${x}">시작 전</div></div><svg id="c_${x}" viewBox="0 0 460 90"></svg><div id="cl_${x}"></div><dl class="kv" id="k_${x}"></dl></div>`).join("");built=true}
+function spark(el,S){const W=460,H=90,L=4,R=4,t0=S.length?S[0][0]:0,t1=S.length?S[S.length-1][0]:1,X=t=>L+(t-t0)/Math.max(1,t1-t0)*(W-L-R);
+ const Yg=v=>40-(Math.min(1.35,Math.max(0.95,v))-0.95)/0.4*36,Yu=v=>86-(Math.min(1.8,Math.max(0.4,v))-0.4)/1.4*40;
+ const p=(i,Y)=>S.filter(s=>s[i]!=null).map((s,j)=>(j?"L":"M")+X(s[0]).toFixed(1)+" "+Y(s[i]).toFixed(1)).join("");
+ el.innerHTML=`<text x="4" y="10">GPC (파랑 = 그래프 선, 주황 = VLM)</text><path d="${p(2,Yg)}" fill="none" stroke="var(--truth)" stroke-width="2"/><path d="${p(1,Yg)}" fill="none" stroke="var(--vlm)" stroke-width="1.2" stroke-dasharray="3 2"/>
+ <text x="4" y="56">균일도</text><path d="${p(4,Yu)}" fill="none" stroke="var(--uni)" stroke-width="2"/><path d="${p(3,Yu)}" fill="none" stroke="var(--vlm)" stroke-width="1.2" stroke-dasharray="3 2"/>`}
+async function poll(){try{draw(await (await fetch("/state.json",{cache:"no-store"})).json())}catch(e){}setTimeout(poll,500)}
+function draw(d){if(!built)build(d.faults);
+ let t="<tr><th>교란</th><th>진행</th><th>판독 오차 GPC · 균일도</th><th>지금 판정 → 조치</th><th>클릭 (함수가 고른 버튼 → 실제로 눌린 버튼)</th><th>GPC · 균일도</th><th>상태</th></tr>";
+ d.faults.forEach(x=>{const B=d.B[x],L=B.last;
+  const cl=B.clicks.map(c=>`<span class="${c.ok?"ok":"bad"}">${T(c.t)} ${ko(c.intent)}${c.ok?"":" → "+ko(c.hit)}</span>`).join(", ")||'<span class="mut">없음</span>';
+  const inb=L&&L.line_g>=1.05&&L.line_g<=1.15&&L.line_u<=1.30;
+  const st=!L?'<span class="pill mut">시작 전</span>':L.since<0?'<span class="pill mut">주입 전</span>':inb?'<span class="pill ok">대역 안</span>':'<span class="pill bad">대역 밖</span>';
+  t+=`<tr><td>${KO[x]}</td><td class="n">${L?T(L.since):"–"}${B.summary?" · 완료":""}</td><td class="n">${f(B.mae_g,4)} · ${f(B.mae_u,4)}${B.fails?` · <span class="bad">실패 ${B.fails}</span>`:""}</td>
+   <td>${L?KO[L.cause]+" → "+ko(L.act):"–"}</td><td style="white-space:normal;min-width:220px">${cl}</td><td class="n">${L?f(L.line_g)+" · "+f(L.line_u,2):"–"}</td><td>${st}</td></tr>`;
+  const img=document.getElementById("v_"+x),ph=document.getElementById("ph_"+x),s=document.getElementById("s_"+x);
+  if(B.live){if(img.hidden){img.hidden=false;ph.hidden=true} if(!img.dataset.busy){img.dataset.busy=1;img.onload=img.onerror=()=>{delete img.dataset.busy};img.src="/s/"+x+".jpg?"+Date.now()}}
+  if(!B.live&&!img.hidden){img.hidden=true;ph.hidden=false;ph.textContent="끝남"}
+  s.textContent=B.summary?(B.summary.end.in_band?"끝 · 대역 안":"끝 · 대역 밖"):B.live?"진행 중":"대기";s.className="pill "+(B.summary?(B.summary.end.in_band?"ok":"bad"):"warn");
+  spark(document.getElementById("c_"+x),B.series);
+  const clEl=document.getElementById("cl_"+x),lc=B.clicks[B.clicks.length-1];
+  const key=B.clicks.length+":"+(lc&&lc.img);
+  if(clEl.dataset.k!==key){clEl.dataset.k=key;clEl.className="cl";clEl.innerHTML=!lc?"":
+   (lc.img?`<img src="/c/${x}/${lc.img}?${B.clicks.length}" alt="마지막 클릭"><div class="cap mut">마지막 클릭 — 빨간 원 = VLM 이 찍은 곳, 초록 상자 = 눌러야 할 버튼 · 문장: ${esc(lc.goal||"")}</div>`:"")+
+   `<div class="list">${B.clicks.map(c=>`<div class="${c.ok?"ok":"bad"}">${T(c.t)} 함수: ${ko(c.intent)} → VLM 이 누른 것: ${ko(c.hit)} ${c.xy?"@"+c.xy.join(","):"(좌표 없음)"} ${c.ok?"✓":"✗"}</div>`).join("")}</div>`}
+  if(!L){document.getElementById("k_"+x).innerHTML="";return}
+  const c=B.clicks[B.clicks.length-1];
+  document.getElementById("k_"+x).innerHTML=`<dt>시각</dt><dd>${T(L.since)} (주입 기준)</dd>
+  <dt>VLM 판독</dt><dd><span style="color:var(--vlm)">GPC ${f(L.read_g)} · 균일도 ${f(L.read_u,2)}</span> <span class="mut">/ 선 ${f(L.line_g)} · ${f(L.line_u,2)}</span></dd>
+  <dt>판정</dt><dd>${KO[L.cause]} → ${ko(L.act)}</dd><dt>시뮬레이터 정답</dt><dd class="${L.correct==="noop"||L.correct===FIX[x]&&L.cause===x||L.act===L.correct?"ok":"warn"}">${ko(L.correct)}</dd><dt>이유</dt><dd>${esc(L.why)}</dd>
+  <dt>노브</dt><dd>${Object.entries(L.knobs).map(([k,v])=>k+" "+v).join(" · ")}</dd>
+  ${c?`<dt>마지막 클릭</dt><dd class="${c.ok?"ok":"bad"}">${ko(c.intent)} → ${ko(c.hit)} @ ${c.xy?c.xy.join(","):"좌표 없음"} · ${esc(c.raw||"")}</dd>`:""}`});
+ document.getElementById("sum").innerHTML=t}
+poll();
+</script>

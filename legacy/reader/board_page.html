@@ -1,0 +1,58 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>이상 판단 검증 보드</title>
+<style>
+:root{--bg:#0f1513;--panel:#18211e;--ink:#e3ebe8;--mut:#93a39e;--line:#2b3834;--ok:#4ade80;--bad:#f87171;--warn:#facc15;--vlm:#fb923c;--truth:#60a5fa}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:13px "Noto Sans KR",system-ui,sans-serif}
+.w{padding:12px;display:grid;gap:12px}h1{font-size:17px;margin:0}h2{font-size:13px;color:var(--mut);margin:0 0 8px;font-weight:600}
+.p{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px;min-width:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:12px}
+.vid{position:relative;aspect-ratio:16/9;background:#000;border:1px solid var(--line);margin-bottom:8px}.vid img{width:100%;height:100%;display:block}
+.vid .ph{position:absolute;inset:0;display:grid;place-items:center;color:var(--mut)}
+.hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px}.hd b{font-size:15px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:12.5px}.kv dt{color:var(--mut)}.kv dd{margin:0;font-family:ui-monospace,monospace;overflow-wrap:anywhere}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.mut{color:var(--mut)}
+.pill{display:inline-block;padding:0 8px;border-radius:999px;border:1px solid currentColor;font-size:11.5px;font-weight:600}
+.tbl{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:12.5px}th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{color:var(--mut);font-weight:500}
+</style>
+<div class="w">
+ <div><h1>이상 판단 검증 — 값 → 시계열 저장 → 함수 판단 → 버튼</h1>
+  <div class="mut">A = 그래프에 그려진 정답 값을 함수에 넣음(함수 설계 확인) · B = VLM 이 화면에서 읽은 값·노브로 함수가 판단(아래 8개 화면, 실시간)</div></div>
+ <div class="p"><h2>A — 정답 값으로 함수만 시험</h2><div class="tbl"><table id="ta"></table></div></div>
+ <div class="p"><h2>B — VLM 판독으로 실행 (8개 동시)</h2><div class="tbl"><table id="tb"></table></div></div>
+ <div class="grid" id="g"></div>
+</div>
+<script>
+const KO={noop:"대기",temp_up:"온도 +",temp_down:"온도 −",purge_up:"퍼지 +",purge_down:"퍼지 −",pulse_up:"펄스 +",pulse_down:"펄스 −",press_up:"압력 +",press_down:"압력 −",flow_up:"유량 +",flow_down:"유량 −",request_clean:"클리닝 요청"};
+const ko=a=>a?(KO[a]||a):"–",esc=s=>String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])),f=(v,n=3)=>v==null?"–":(+v).toFixed(n);
+const T=s=>s==null?"–":(s<0?"−":"+")+Math.abs(s).toFixed(0)+"초";
+const mark=b=>b?'<span class="ok">✅</span>':'<span class="bad">❌</span>';
+let built=false;
+function build(F){const g=document.getElementById("g");g.innerHTML=F.map(f=>`<div class="p" id="c_${f}"><div class="hd"><b>${f}</b><span id="s_${f}" class="pill mut">대기</span></div>
+ <div class="vid"><img id="v_${f}" alt="${f} 화면" hidden><div class="ph" id="ph_${f}">화면 없음</div></div><dl class="kv" id="k_${f}"></dl></div>`).join("");built=true}
+async function poll(){try{draw(await (await fetch("/state.json",{cache:"no-store"})).json())}catch(e){}setTimeout(poll,1000)}
+function row(s){return `<td>${ko(s.expected_action)}</td><td>${esc(s.shape)} ${mark(s.shape_ok)}</td><td>${ko(s.first_action)} ${T(s.first_at)} ${mark(s.first_ok)}</td><td>${s.false_pre}</td><td>${s.presses.length}</td><td>${f(s.end_gpc)} ${s.end_in_band?'<span class="ok">대역 안</span>':'<span class="bad">대역 밖</span>'}</td>`}
+function draw(d){
+ if(!built)build(d.faults);
+ let a="<tr><th>이상</th><th>입력</th><th>기대 조치</th><th>판정</th><th>첫 조치</th><th>주입 전 오작동</th><th>누른 횟수</th><th>마지막 GPC</th></tr>";
+ d.faults.forEach(fl=>["line","raw"].forEach(m=>{const s=(d.A[fl]||{})[m];if(s)a+=`<tr><td>${fl}</td><td>${m==="line"?"그래프 선":"순간값(참고)"}</td>${row(s)}</tr>`}));
+ document.getElementById("ta").innerHTML=a;
+ let b="<tr><th>이상</th><th>진행</th><th>기대 조치</th><th>판정</th><th>첫 조치</th><th>주입 전 오작동</th><th>누른 횟수</th><th>마지막 GPC</th></tr>";
+ d.faults.forEach(fl=>{const B=d.B[fl];const s=B.summary;b+=`<tr><td>${fl}</td><td>${s?"완료":B.n?B.n+"/500초":"–"}</td>${s?row(s):"<td colspan=6 class='mut'>진행 중</td>"}</tr>`});
+ document.getElementById("tb").innerHTML=b;
+ d.faults.forEach(fl=>{const B=d.B[fl],L=B.last,img=document.getElementById("v_"+fl),ph=document.getElementById("ph_"+fl),st=document.getElementById("s_"+fl);
+  if(B.live&&img.hidden){img.src="/v/"+fl+".mjpg?"+Date.now();img.hidden=false;ph.hidden=true}
+  if(!B.live&&!img.hidden){img.hidden=true;ph.hidden=false;ph.textContent="끝남"}
+  st.textContent=B.summary?(B.summary.first_ok?"맞게 대응":"잘못 대응"):(B.live?"진행 중":"대기");st.className="pill "+(B.summary?(B.summary.first_ok?"ok":"bad"):"warn");
+  if(!L){document.getElementById("k_"+fl).innerHTML="<dt>상태</dt><dd>시작 전</dd>";return}
+  const e=L.value!=null?Math.abs(L.value-L.line_end):null;
+  const kOk=JSON.stringify(L.knobs_used)===JSON.stringify(L.knobs_true);
+  document.getElementById("k_"+fl).innerHTML=`<dt>시각</dt><dd>${T(L.since_inject_s)} (주입 기준)</dd>
+  <dt>GPC</dt><dd><span style="color:var(--vlm)">VLM ${f(L.value)}</span> / <span style="color:var(--truth)">선 끝 ${f(L.line_end)}</span> ${e!=null?`<span class="${e>.01?"bad":"ok"}">오차 ${f(e,4)}</span>`:'<span class="bad">판독 실패</span>'}</dd>
+  <dt>노브(VLM)</dt><dd class="${kOk?"":"bad"}">${Object.entries(L.knobs_used||{}).map(([k,v])=>k+" "+v).join(" · ")}${kOk?"":" ≠ 실제"}</dd>
+  <dt>판정</dt><dd>${esc(L.agent_shape||"없음")} <span class="mut">(이번 초 ${esc(L.det_shape)})</span></dd>
+  <dt>조치</dt><dd>${ko(L.action)} <span class="mut">· 정답 ${ko(L.correct_action)}</span></dd>
+  <dt>이유</dt><dd>${esc(L.why)}</dd>
+  <dt>누른 것</dt><dd>${B.presses.map(p=>`${T(p[0])} ${ko(p[1])}${p[2]&&p[2]!==p[1]?" → "+ko(p[2]):""}`).join(", ")||"없음"}</dd>`});
+}
+poll();
+</script>

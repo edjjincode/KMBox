@@ -1,0 +1,163 @@
+<title>이상 감지 폐루프 보드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 관제실 보드: 위 = 요약 표(이상별 상태 한 줄), 아래 = 이상 6종 카드(그래프 2개 + 노브 + 판단 + 누른 기록) */
+:root {
+  --bg: #eef1f3; --panel: #ffffff; --ink: #121a1f; --ink2: #475660; --mut: #6f7d86; --line: #d6dde2; --grid: #e8edf0;
+  --gpc: #2a78d6; --uni: #6250d6; --band: rgba(27, 175, 122, .11);
+  --good: #0f7b4b; --bad: #c0362c; --warn: #9a6a00; --undo: #6f7d86;
+  --sans: "IBM Plex Sans KR", "Noto Sans KR", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1418; --panel: #172026; --ink: #e5ecf0; --ink2: #b3c1ca; --mut: #8696a0; --line: #2a363e; --grid: #222d34;
+  --gpc: #3987e5; --uni: #9085e9; --band: rgba(25, 158, 112, .16); --good: #4ade80; --bad: #f87171; --warn: #facc15; --undo: #8696a0; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1418; --panel: #172026; --ink: #e5ecf0; --ink2: #b3c1ca; --mut: #8696a0; --line: #2a363e; --grid: #222d34;
+  --gpc: #3987e5; --uni: #9085e9; --band: rgba(25, 158, 112, .16); --good: #4ade80; --bad: #f87171; --warn: #facc15; --undo: #8696a0; color-scheme: dark }
+* { box-sizing: border-box }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); }
+.wrap { max-width: 1400px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 48px; display: grid; gap: 16px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; text-wrap: balance; }
+.sub { color: var(--ink2); margin: 2px 0 0; max-width: 80ch; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.bar label { color: var(--mut); font-size: 13px; }
+select, button { font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+button.primary { background: var(--gpc); color: #fff; border-color: var(--gpc); font-weight: 600; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--gpc); outline-offset: 2px; }
+.clock { font-family: var(--mono); color: var(--ink2); }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; min-width: 0; }
+.tbl { overflow-x: auto; } table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; color: var(--mut); font-weight: 500; font-size: 12px; border-bottom: 1px solid var(--line); padding: 6px 8px; white-space: nowrap; }
+td { border-bottom: 1px solid var(--line); padding: 6px 8px; white-space: nowrap; }
+td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.pill { display: inline-block; padding: 0 8px; border-radius: 999px; border: 1px solid currentColor; font-size: 12px; font-weight: 600; }
+.ok { color: var(--good) } .bad { color: var(--bad) } .warn { color: var(--warn) } .mut { color: var(--mut) }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 14px; }
+.card { display: grid; gap: 8px; }
+.card .hd { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.card .hd b { font-size: 15px; }
+.card .mech { color: var(--mut); font-size: 12.5px; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+svg { width: 100%; height: auto; display: block; }
+svg text { fill: var(--mut); font: 10.5px var(--mono); }
+.knobs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; font-size: 12px; }
+.knobs div { background: var(--bg); border-radius: 4px; padding: 3px 6px; min-width: 0; }
+.knobs .k { color: var(--mut); font-size: 11px; } .knobs .v { font-family: var(--mono); font-weight: 500; }
+.knobs .moved .v { color: var(--warn); }
+.judge { background: var(--bg); border-radius: 4px; padding: 6px 8px; font-size: 13px; }
+.judge .a { font-weight: 700; } .judge .w { color: var(--ink2); font-size: 12.5px; }
+.log { font: 12px/1.6 var(--mono); color: var(--ink2); max-height: 96px; overflow-y: auto; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+</style>
+
+<div class="wrap">
+  <div>
+    <h1>이상 감지 폐루프 보드 — 시뮬레이터 v2</h1>
+    <p class="sub">이상 6종을 동시에 돌린다. 각 칸의 에이전트는 화면에 그려진 GPC·균일도 선만 보고 원인 피처를 판정해 버튼을 누르고, 누른 뒤 그래프가 이상 반대 방향으로 움직였는지 확인한다. 두 번 연속 듣지 않으면 되돌린다.</p>
+  </div>
+  <div class="bar">
+    <label for="spd">속도</label>
+    <select id="spd"><option value="2">실시간</option><option value="8">4배속</option><option value="40" selected>20배속</option><option value="120">60배속</option></select>
+    <button id="restart" class="primary">새 시드로 다시 시작</button>
+    <button id="pause">일시정지</button>
+    <span class="clock" id="clock"></span>
+  </div>
+  <section>
+    <div class="tbl"><table id="sum"></table></div>
+  </section>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script>/*__COORDS__*/</script>
+<script>/*__ENGINE__*/</script>
+<script>/*__AGENT__*/</script>
+<script>
+const FAULTS = ["normal", "temp", "purge", "pulse", "press", "flow"];
+const KO = { normal: "정상", temp: "온도", purge: "퍼지", pulse: "펄스", press: "압력", flow: "유량",
+  noop: "대기", temp_up: "온도 +", temp_down: "온도 −", purge_up: "퍼지 +", purge_down: "퍼지 −", pulse_up: "펄스 +", pulse_down: "펄스 −",
+  press_up: "압력 +", press_down: "압력 −", flow_up: "유량 +", flow_down: "유량 −", request_clean: "클리닝 요청" };
+const INJECT_AFTER_S = 120;      // 시작 2분 뒤 주입
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+let runs = [], paused = false, baseSeed = 1;
+
+function start() {
+  baseSeed = 1 + Math.floor(Math.random() * 9000);
+  runs = FAULTS.map((f, i) => {
+    const sim = new SIM.Sim({ seed: baseSeed + i, faultType: f, injectTick: 1200 + INJECT_AFTER_S * 2 });
+    for (let k = 0; k < 1200; k++) sim.tick();          // 10분 창을 미리 채운다
+    return { f: f, sim: sim, ag: new AGENT.Agent(), presses: [], firstAt: null, nowS: -INJECT_AFTER_S };
+  });
+  $("grid").innerHTML = runs.map((r, i) => `<section class="card" id="c${i}"><div class="hd"><b>${KO[r.f]}${r.f !== "normal" ? " 교란" : ""}</b>
+    <span class="mech">${esc(SIM.MECHANISM[r.f].split(" — ")[1] || "")}</span></div>
+    <div class="charts"><svg id="g${i}" viewBox="0 0 300 150" role="img" aria-label="${KO[r.f]} GPC"></svg><svg id="u${i}" viewBox="0 0 300 150" role="img" aria-label="${KO[r.f]} 균일도"></svg></div>
+    <div class="knobs" id="k${i}"></div><div class="judge" id="j${i}"></div><div class="log" id="l${i}"></div></section>`).join("");
+  draw();
+}
+
+function tickAll(simSeconds) {
+  for (const r of runs) for (let s = 0; s < simSeconds; s++) {
+    r.sim.tick(); r.sim.tick(); r.nowS += 1;
+    const since = (r.sim.t - r.sim.injectTick) * SIM.DT;
+    const res = r.ag.step(r.sim, since, id => r.sim.apply(id));
+    if (res.act !== "noop") {
+      r.presses.push({ t: since, act: res.act, why: res.why, undo: res.why.indexOf("되돌리") >= 0 });
+      if (r.firstAt === null && !res.why.includes("되돌리")) r.firstAt = since;
+    }
+  }
+}
+
+function chart(el, pts, lo, hi, band, color, tick, presses, sim) {
+  const W = 300, H = 150, L = 34, R = 6, T = 8, B = 18, n = pts.length;
+  const X = i => L + (W - L - R) * i / Math.max(1, 119), Y = v => H - B - (Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo) * (H - T - B);
+  let g = `<rect x="${L}" y="${Y(band[1])}" width="${W - L - R}" height="${Y(band[0]) - Y(band[1])}" fill="var(--band)"/>`;
+  for (let v = lo; v <= hi + 1e-9; v += tick) g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)"/><text x="${L - 4}" y="${Y(v) + 3.5}" text-anchor="end">${v.toFixed(2)}</text>`;
+  g += `<text x="${L}" y="${H - 4}">−10분</text><text x="${W - R}" y="${H - 4}" text-anchor="end">지금</text>`;
+  const off = 120 - n, winStart = sim.t - 1200;
+  const injX = L + (W - L - R) * ((sim.injectTick - winStart) / 1200);
+  if (sim.faultType !== "normal" && injX >= L) g += `<line x1="${injX}" x2="${injX}" y1="${T}" y2="${H - B}" stroke="var(--mut)" stroke-dasharray="3 3"/>`;
+  presses.forEach(p => { const tk = sim.injectTick + p.t / SIM.DT, x = L + (W - L - R) * ((tk - winStart) / 1200);
+    if (x >= L) g += `<line x1="${x}" x2="${x}" y1="${H - B - 7}" y2="${H - B}" stroke="${p.undo ? "var(--undo)" : (p.ok === false ? "var(--bad)" : "var(--good)")}" stroke-width="2.5"><title>${esc(KO[p.act])} · ${esc(p.why)}</title></line>`; });
+  g += `<path d="${pts.map((p, i) => (i ? "L" : "M") + X(i + off).toFixed(1) + " " + Y(p.v).toFixed(1)).join("")}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round"/>`;
+  if (n) g += `<circle cx="${X(n - 1 + off)}" cy="${Y(pts[n - 1].v)}" r="3" fill="${color}"/>`;
+  el.innerHTML = g;
+}
+
+function draw() {
+  let t = `<tr><th>교란</th><th>지금 판정</th><th>지금 조치 · 이유</th><th>첫 조치</th><th>누른 것</th><th>GPC</th><th>균일도</th><th>상태</th></tr>`;
+  runs.forEach((r, i) => {
+    const s = r.sim, v = s.view(), g = s.gt(), last = r.ag.last, since = (s.t - s.injectTick) * SIM.DT;
+    // 효과 판정 결과를 누른 기록에 붙인다
+    r.ag.log.forEach(e => { const p = r.presses.find(q => q.act === e.act && Math.abs(q.t - (e.t - (e.act === "press_down" ? 90 : 30))) <= 2 && q.ok === undefined); if (p) p.ok = e.good; });
+    chart($("g" + i), v.gpcPoints, 0.95, 1.30, SIM.GPC_BAND, "var(--gpc)", 0.05, r.presses, s);
+    chart($("u" + i), v.uPoints, 0.60, 1.50, SIM.U_BAND, "var(--uni)", 0.15, r.presses, s);
+    $("k" + i).innerHTML = SIM.KNOB_ORDER.map(k => `<div class="${s.knobs[k] !== SIM.KNOBS[k].base ? "moved" : ""}"><div class="k">${SIM.KNOBS[k].label}</div><div class="v">${s.knobs[k].toFixed(SIM.KNOBS[k].dp)}</div></div>`).join("");
+    const inG = g.gpc_true >= SIM.GPC_BAND[0] && g.gpc_true <= SIM.GPC_BAND[1], inU = g.uniformity_true <= SIM.U_BAND[1];
+    const fixes = r.presses.filter(p => !p.undo && p.act === SIM.FIX[r.f]).length, wrong = r.presses.filter(p => !p.undo && p.act !== SIM.FIX[r.f] && p.act !== "request_clean").length;
+    const undos = r.presses.filter(p => p.undo).length, cleans = r.presses.filter(p => p.act === "request_clean").length;
+    const cause = last ? last.d.cause : "normal";
+    $("j" + i).innerHTML = `<span class="mut">${since < 0 ? "주입 " + Math.ceil(-since) + "초 전" : "주입 후 +" + Math.floor(since) + "초"} · 판정</span> <span class="a">${KO[cause]}</span> → <span class="a">${last ? KO[last.act] : "대기"}</span><div class="w">${esc(last ? last.why : "")}</div>`;
+    $("l" + i).innerHTML = r.presses.slice().reverse().map(p => `<div><span class="${p.undo ? "mut" : p.ok === false ? "bad" : p.ok ? "ok" : ""}">+${Math.round(p.t)}s ${esc(KO[p.act])}${p.ok === true ? " ✓ 들음" : p.ok === false ? " ✗ 안 들음" : ""}</span></div>`).join("") || '<span class="mut">아직 누른 버튼 없음</span>';
+    const state = since < 0 ? '<span class="pill mut">주입 전</span>' : (inG && inU ? '<span class="pill ok">대역 안</span>' : '<span class="pill bad">대역 밖</span>');
+    t += `<tr><td>${KO[r.f]}</td><td>${KO[cause]} ${r.f !== "normal" && since > 0 ? (cause === r.f ? '<span class="ok">✓</span>' : cause === "normal" ? "" : '<span class="bad">✗</span>') : ""}</td>
+      <td style="white-space:normal;min-width:260px">${last ? KO[last.act] : "대기"} <span class="mut">· ${esc(last ? last.why : "")}</span></td>
+      <td class="n">${r.firstAt === null ? "–" : "+" + Math.round(r.firstAt) + "초"}</td>
+      <td class="n">맞음 ${fixes}${wrong ? ` · <span class="bad">잘못 ${wrong}</span>` : ""}${undos ? ` · 되돌림 ${undos}` : ""}${cleans ? ` · 클리닝 ${cleans}` : ""}</td>
+      <td class="n ${inG ? "" : "bad"}">${g.gpc_true.toFixed(3)}</td><td class="n ${inU ? "" : "bad"}">${g.uniformity_true.toFixed(2)}</td><td>${state}</td></tr>`;
+  });
+  $("sum").innerHTML = t;
+  const s0 = runs[0].sim, since = (s0.t - s0.injectTick) * SIM.DT;
+  $("clock").textContent = `시드 ${baseSeed}~${baseSeed + 5} · ` + (since < 0 ? `주입까지 ${Math.ceil(-since)}초` : `주입 후 +${Math.floor(since)}초`);
+}
+
+let acc = 0, lastT = performance.now();
+function loop(now) {
+  const dt = Math.min(0.25, (now - lastT) / 1000); lastT = now;
+  if (!paused) { acc += dt * parseInt($("spd").value, 10) / 2; const n = Math.floor(acc); if (n > 0) { acc -= n; tickAll(n); draw(); } }
+  requestAnimationFrame(loop);
+}
+$("restart").onclick = start;
+$("pause").onclick = function () { paused = !paused; this.textContent = paused ? "재개" : "일시정지"; };
+start(); requestAnimationFrame(loop);
+</script>
