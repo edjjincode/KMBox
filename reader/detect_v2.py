@@ -67,3 +67,28 @@ def detect(ts, gpc, uni, t_now=None, ignore=()):
         return out("normal", f"GPC {dg:+.3f}, 균일도 {du:+.2f} — 변화가 작다")
     c = min(SIG_DEG, key=lambda k: abs((ang - SIG_DEG[k] + 180) % 360 - 180))
     return out(c, f"GPC {dg:+.3f}, 균일도 {du:+.2f} → 방향 {ang:.0f}° 가 {LABEL[c]} 지문({SIG_DEG[c]:.0f}°)에 가장 가깝다")
+
+
+# ── 주입량 계산: GPC 가 목표에서 벗어난 양(dg)을 피처 값으로 거꾸로 푼다 ─────────────────────────
+# 피처 x = 가운데(기준값)에서 '나쁜 쪽'으로 벗어난 양. GPC 변화 = sign × (s_in·x + s_out·max(0, x − L))
+#   s_in = 창 안 기울기, s_out = 하한을 넘은 뒤 더해지는 기울기, L = 가운데 → 하한 거리 (sim/engine_v2.js gpcTerms 와 같은 값)
+# 압력은 평균이 아니라 진동으로 나타나서 여기 없다 (한 칸씩 누른다).
+DOSE = {  # 피처: (GPC 부호, s_in, s_out, L, 한 칸)
+    "temp":  (+1, 0.002, 0.008, 10.0, 5.0),     # 온도 1°C ↓ → GPC +0.002, 245 아래는 +0.010
+    "purge": (+1, 0.02, 0.10, 1.0, 0.5),        # 퍼지 1s ↓ → GPC +0.02, 3.5 아래는 +0.12
+    "pulse": (-1, 1.0, 5.0, 0.02, 0.01),        # 펄스 0.01s ↓ → GPC −0.01, 0.08 아래는 −0.06
+    "flow":  (-1, 0.0003, 0.0, 50.0, 25.0),     # 유량 25sccm ↓ → GPC −0.0075
+}
+MAX_PRESS = 4
+
+
+def dose(cause, dg):
+    """GPC 변화 dg → 그 피처가 가운데에서 얼마나 벗어났나(x, 피처 단위)와 되돌릴 칸 수 n (음수면 반대 버튼)."""
+    if cause not in DOSE: return None
+    sg, s_in, s_out, L, step = DOSE[cause]
+    y = sg * dg                                   # 나쁜 쪽이면 +
+    edge = s_in * L                               # 하한에서의 GPC 변화
+    if y <= edge: x = y / s_in
+    else: x = L + (y - edge) / (s_in + s_out)
+    n = max(-MAX_PRESS, min(MAX_PRESS, round(x / step)))
+    return {"x": round(x, 4), "n": n, "step": step}

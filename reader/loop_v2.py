@@ -30,6 +30,7 @@ def main():
     ap.add_argument("--fault", required=True); ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--mode", choices=["truth", "read", "vlm"], default="read")
     ap.add_argument("--pre", type=int, default=120, help="주입 전 초 (그래프 10분 창은 미리 채운다)")
+    ap.add_argument("--no-dose", action="store_true", help="주입량 계산 없이 한 칸씩 (이전 방식)")
     ap.add_argument("--post", type=int, default=360, help="주입 후 초")
     ap.add_argument("--read-model", default="qwen/qwen3.5-27b"); ap.add_argument("--ground-model", default="qwen/qwen3-vl-235b-a22b-instruct")
     ap.add_argument("--ground-style", choices=["goal", "label"], default="goal", help="goal = 하려는 일 문장, label = 화면 라벨을 짚는 문장")
@@ -46,7 +47,7 @@ def main():
             from reader.vlm_v2 import VLM
             R = VLM(a.read_model)
             G = VLM(a.ground_model) if a.mode == "vlm" else None
-        ag = Agent(); f = open(out / "steps.jsonl", "w", encoding="utf-8"); clicks = []
+        ag = Agent(use_dose=not a.no_dose); f = open(out / "steps.jsonl", "w", encoding="utf-8"); clicks = []
         for i in range(a.pre + a.post):
             tr = page.evaluate(TRUTH_JS); now = tr["since"]
             if a.mode == "truth":
@@ -63,16 +64,17 @@ def main():
                       if (m := re.search(rf'"{k}"\s*:\s*"?(-?\d+(?:\.\d+)?)', raw))}
                 return kv
 
-            def press(act):
+            def press(act, n=1):
                 before = page.evaluate("sim.actionLog.length")
                 if a.mode != "vlm":                                 # 함수가 고른 조치를 좌표표 위치로 제출
                     b = COORDS["buttons"][act]; xy, g = (b["x"], b["y"]), None
                 else:
                     g = G.ground(page.screenshot(), act, style=a.ground_style); xy = g["xy"]
-                if xy: page.mouse.click(*xy)
+                for k in range(n if xy else 0):                     # 위치는 한 번만 찾고 같은 자리를 n번 누른다
+                    page.mouse.click(*xy); page.wait_for_timeout(120)
                 log = page.evaluate("sim.actionLog")
                 hit = log[-1]["id"] if len(log) > before else None
-                c = {"t": now, "intent": act, "xy": xy, "hit": hit, "ok": hit == act, "goal": g and g["goal"], "img": f"{len(clicks) + 1:02d}.jpg" if a.mode == "vlm" else None,
+                c = {"t": now, "intent": act, "n": n, "n_hit": sum(1 for x in log[before:] if x["id"] == act), "xy": xy, "hit": hit, "ok": hit == act, "goal": g and g["goal"], "img": f"{len(clicks) + 1:02d}.jpg" if a.mode == "vlm" else None,
                      "raw": g and g["raw"], "norm": g and g["norm"], "latency_s": g and g["latency_s"]}
                 clicks.append(c)
                 if a.mode == "vlm":
@@ -84,7 +86,7 @@ def main():
 
             r = ag.step(now, knobs_fn, press)
             row = {"i": i, "since": now, "read_g": rd["gpc"], "read_u": rd["u"], "line_g": tr["gpc_line"], "line_u": tr["u_line"],
-                   "knobs": tr["knobs"], "cause": r["d"]["cause"], "act": r["act"], "why": r["why"], "correct": tr["correct_action"],
+                   "knobs": tr["knobs"], "cause": r["d"]["cause"], "act": r["act"], "n": r.get("n", 1), "why": r["why"], "correct": tr["correct_action"],
                    "click": clicks[-1] if r["act"] != "noop" and clicks else None, "read_raw": rd["raw"], "latency_s": rd["latency_s"]}
             f.write(json.dumps(row, ensure_ascii=False) + "\n"); f.flush()
             if i % 2 == 0 and a.mode != "truth":              # 보드용 화면 (CDP 캡처라 가상 모니터와 상관없다)

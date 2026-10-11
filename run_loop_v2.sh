@@ -12,6 +12,6 @@ $PY -m reader.board_v2 "$D" --port 8765 > "$D/board.log" 2>&1 &
 echo "보드: http://127.0.0.1:8765 — 열면 시작 ($D)"
 until [ -f "$D/viewer_seen" ]; do sleep 1; done
 for f in $FAULTS; do
-  $PY -m reader.loop_v2 --fault $f --mode $MODE --pre ${PRE:-10} --out "$D/$f" > "$D/$f.log" 2>&1 &
+  $PY -m reader.loop_v2 --fault $f --mode $MODE --pre ${PRE:-10} --post ${POST:-360} --out "$D/$f" > "$D/$f.log" 2>&1 &
 done; wait
 echo "폐루프 끝. 보드는 계속 떠 있다."

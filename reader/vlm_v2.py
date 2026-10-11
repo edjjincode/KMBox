@@ -33,7 +33,7 @@ def g_prompt(goal: str) -> str:
 
 def _parse_xy(t: str):
     """작은 모델이 자주 내는 깨진 JSON({"x": 366, 878})도 숫자로 건져낸다."""
-    m = re.search(r"\{.*?\}", t or "", re.S)
+    m = re.search(r"\{.*?\}", t or "", re.S) or re.search(r"\{.*", t or "", re.S)   # 닫는 } 를 빠뜨린 경우({"x": 196, 874])도
     if not m:
         return None
     try:
